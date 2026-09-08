@@ -1,0 +1,1 @@
+<resources><style name="Theme.BNET" parent="android:style/Theme.Material.Light.NoActionBar"><item name="android:fontFamily">sans</item><item name="android:colorAccent">#22C55E</item><item name="android:navigationBarColor">#07110B</item><item name="android:statusBarColor">#07110B</item><item name="android:windowLightStatusBar">false</item></style></resources>
