@@ -72,7 +72,16 @@ fun BnetScreen(myNumber: String, mesh: MeshManager) {
                 }
                 OutlinedTextField(dial, { dial = it.take(16) }, label = { Text("Numéro BNET") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 val keys = listOf("1","2","3","4","5","6","7","8","9","+","0","⌫")
-                keys.chunked(3).forEach { row -> Row { row.forEach { key -> TextButton(onClick = { if (key == "⌫") dial = dial.dropLast(1) else if (dial.length < 16) dial += key }, modifier = Modifier.size(88.dp, 50.dp)) { Text(key, fontSize = 22.sp) } } }
+                keys.chunked(3).forEach { row ->
+                    Row {
+                        row.forEach { key ->
+                            TextButton(
+                                onClick = { if (key == "⌫") dial = dial.dropLast(1) else if (dial.length < 16) dial += key },
+                                modifier = Modifier.size(88.dp, 50.dp)
+                            ) { Text(key, fontSize = 22.sp) }
+                        }
+                    }
+                }
                 Button(onClick = { if (!mesh.callNumber(dial)) message = "Numéro absent du radar ou téléphone pas encore connecté." }, modifier = Modifier.fillMaxWidth()) { Text("Appeler sur BNET") }
             }
             if (message.isNotBlank()) Text(message, color = Color(0xFFFFB4AB), modifier = Modifier.padding(8.dp))
