@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.media.*
 import android.media.RingtoneManager
+import android.net.Uri
 import android.util.Base64
 import androidx.core.content.ContextCompat
 import com.google.android.gms.nearby.Nearby
@@ -12,17 +13,21 @@ import com.google.android.gms.nearby.connection.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.io.PipedInputStream
 import java.io.PipedOutputStream
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 enum class CallState { IDLE, OUTGOING, INCOMING, ACTIVE }
-data class ChatMessage(val peer: String, val text: String, val mine: Boolean)
+data class ChatMessage(val peer: String, val text: String, val mine: Boolean, val imageSource: String? = null)
 
 class MeshManager(private val context: Context, val myNumber: String) {
     private val client = Nearby.getConnectionsClient(context)
     val status = MutableStateFlow("Radar arrêté")
     val peers = MutableStateFlow<Map<String, String>>(emptyMap())
+    val onlinePeers = MutableStateFlow<Map<String, String>>(emptyMap())
     val callState = MutableStateFlow(CallState.IDLE)
     val remoteNumber = MutableStateFlow("")
     val messages = MutableStateFlow<List<ChatMessage>>(emptyList())
@@ -36,6 +41,9 @@ class MeshManager(private val context: Context, val myNumber: String) {
     private var audioPipe: PipedOutputStream? = null
     private var incomingRingtone: Ringtone? = null
     private var ringback: ToneGenerator? = null
+    private val incomingFiles = mutableMapOf<Long, Payload>()
+    private val incomingFileOwners = mutableMapOf<Long, Pair<String, String>>()
+    private val completedFiles = mutableSetOf<Long>()
 
     private fun control(text: String) = Payload.fromBytes(text.toByteArray())
 
@@ -43,6 +51,11 @@ class MeshManager(private val context: Context, val myNumber: String) {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
             if (payload.type == Payload.Type.STREAM) {
                 payload.asStream()?.asInputStream()?.let(::playIncomingStream)
+                return
+            }
+            if (payload.type == Payload.Type.FILE) {
+                incomingFiles[payload.id] = payload
+                saveIncomingPhotoIfReady(payload.id)
                 return
             }
             val message = payload.asBytes()?.toString(StandardCharsets.UTF_8) ?: return
@@ -62,9 +75,21 @@ class MeshManager(private val context: Context, val myNumber: String) {
                     messages.value = messages.value + ChatMessage(peer, text, false)
                     status.value = "Nouveau message de $peer"
                 }
+                message.startsWith("PHOTO|") -> {
+                    val parts = message.split('|', limit = 3)
+                    val id = parts.getOrNull(1)?.toLongOrNull() ?: return
+                    val name = parts.getOrNull(2)?.replace(Regex("[^A-Za-z0-9._-]"), "_") ?: "photo.jpg"
+                    incomingFileOwners[id] = (connected[endpointId] ?: "Inconnu") to name
+                    saveIncomingPhotoIfReady(id)
+                }
             }
         }
-        override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) = Unit
+        override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) {
+            if (update.status == PayloadTransferUpdate.Status.SUCCESS) {
+                completedFiles += update.payloadId
+                saveIncomingPhotoIfReady(update.payloadId)
+            }
+        }
     }
 
     private val lifecycle = object : ConnectionLifecycleCallback() {
@@ -75,11 +100,13 @@ class MeshManager(private val context: Context, val myNumber: String) {
         override fun onConnectionResult(id: String, result: ConnectionResolution) {
             if (result.status.isSuccess) {
                 connected[id] = pendingNames[id] ?: peers.value[id] ?: "Inconnu"
+                onlinePeers.value = connected.toMap()
                 status.value = "${connected.size} téléphone(s) disponible(s)"
             } else status.value = "Connexion refusée (${result.status.statusCode})"
         }
         override fun onDisconnected(id: String) {
             connected.remove(id); pendingNames.remove(id); peers.value = peers.value - id
+            onlinePeers.value = connected.toMap()
             if (id == activeEndpoint) finishCall("Téléphone déconnecté")
             status.value = "${connected.size} téléphone(s) disponible(s)"
         }
@@ -124,6 +151,39 @@ class MeshManager(private val context: Context, val myNumber: String) {
         client.sendPayload(endpointId, control("MSG|$encoded"))
         messages.value = messages.value + ChatMessage(peer, text.trim(), true)
         return true
+    }
+
+    fun sendPhoto(endpointId: String, uri: Uri): Boolean {
+        val peer = connected[endpointId] ?: return false
+        val descriptor = context.contentResolver.openFileDescriptor(uri, "r") ?: return false
+        val payload = Payload.fromFile(descriptor)
+        val name = queryDisplayName(uri) ?: "photo-${System.currentTimeMillis()}.jpg"
+        client.sendPayload(endpointId, control("PHOTO|${payload.id}|$name"))
+        client.sendPayload(endpointId, payload)
+        messages.value = messages.value + ChatMessage(peer, "Photo", true, uri.toString())
+        return true
+    }
+
+    private fun queryDisplayName(uri: Uri): String? = runCatching {
+        context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0) else null
+        }
+    }.getOrNull()
+
+    private fun saveIncomingPhotoIfReady(id: Long) {
+        if (id !in completedFiles) return
+        val payload = incomingFiles[id] ?: return
+        val owner = incomingFileOwners[id] ?: return
+        val incoming = payload.asFile()?.asParcelFileDescriptor() ?: return
+        val directory = File(context.filesDir, "bnet_photos").apply { mkdirs() }
+        val destination = File(directory, "${System.currentTimeMillis()}-${owner.second}")
+        runCatching {
+            FileInputStream(incoming.fileDescriptor).use { input -> FileOutputStream(destination).use { output -> input.copyTo(output) } }
+            incoming.close()
+            messages.value = messages.value + ChatMessage(owner.first, "Photo reçue", false, destination.absolutePath)
+            status.value = "Photo reçue de ${owner.first}"
+        }.onFailure { status.value = "Erreur de réception de la photo" }
+        incomingFiles.remove(id); incomingFileOwners.remove(id); completedFiles.remove(id)
     }
 
     private fun startIncomingRingtone() {

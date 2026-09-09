@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
@@ -30,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlin.math.cos
 import kotlin.math.sin
+import coil.compose.AsyncImage
 
 private val Green = Color(0xFF39FF88)
 private val Dark = Color(0xFF030A07)
@@ -78,7 +80,7 @@ private fun BnetSplash() {
 fun BnetScreen(myNumber: String, mesh: MeshManager) {
     var tab by remember { mutableIntStateOf(0) }
     var message by remember { mutableStateOf("") }
-    val status by mesh.status.collectAsState(); val peers by mesh.peers.collectAsState(); val callState by mesh.callState.collectAsState(); val remote by mesh.remoteNumber.collectAsState()
+    val status by mesh.status.collectAsState(); val peers by mesh.peers.collectAsState(); val online by mesh.onlinePeers.collectAsState(); val callState by mesh.callState.collectAsState(); val remote by mesh.remoteNumber.collectAsState()
     val permissions = buildList {
         add(Manifest.permission.RECORD_AUDIO)
         if (Build.VERSION.SDK_INT >= 31) { add(Manifest.permission.BLUETOOTH_SCAN); add(Manifest.permission.BLUETOOTH_ADVERTISE); add(Manifest.permission.BLUETOOTH_CONNECT) }
@@ -93,12 +95,12 @@ fun BnetScreen(myNumber: String, mesh: MeshManager) {
         Column(Modifier.fillMaxSize().padding(16.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column { Text("BNET", fontSize = 27.sp, fontWeight = FontWeight.Black, color = Green); Text(myNumber, color = Color.White, fontSize = 13.sp) }
-                AssistChip(onClick = { launcher.launch(permissions) }, label = { Text(if (peers.isEmpty()) "RADAR" else "${peers.size} EN LIGNE") })
+                AssistChip(onClick = { launcher.launch(permissions) }, label = { Text(if (online.isEmpty()) "RADAR" else "${online.size} EN LIGNE") })
             }
             Text(status, color = Color.Gray, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
             if (callState != CallState.IDLE) CallPanel(callState, remote, mesh)
-            else if (tab == 0) DialerScreen(peers, mesh) { message = it }
-            else MessengerScreen(peers, mesh) { message = it }
+            else if (tab == 0) DialerScreen(online, mesh) { message = it }
+            else MessengerScreen(online, mesh) { message = it }
             if (message.isNotBlank()) Text(message, color = Color(0xFFFF9B93), fontSize = 13.sp, modifier = Modifier.padding(6.dp))
             Spacer(Modifier.weight(1f))
             NavigationBar(containerColor = Panel) {
@@ -127,6 +129,12 @@ private fun DialerScreen(peers: Map<String, String>, mesh: MeshManager, report: 
 @Composable
 private fun MessengerScreen(peers: Map<String, String>, mesh: MeshManager, report: (String) -> Unit) {
     val messages by mesh.messages.collectAsState(); var selected by remember { mutableStateOf("") }; var draft by remember { mutableStateOf("") }
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            if (selected.isBlank()) report("Choisis d’abord un numéro.")
+            else if (!mesh.sendPhoto(selected, uri)) report("Photo non envoyée.")
+        }
+    }
     Text("Messagerie locale", fontWeight = FontWeight.Bold)
     if (peers.isEmpty()) Text("Active le radar pour trouver un contact.", color = Color.Gray, modifier = Modifier.padding(16.dp))
     LazyColumn(Modifier.fillMaxWidth().heightIn(max = 105.dp)) { items(peers.entries.toList(), key = { it.key }) { peer -> PeerCard(peer.value, if (selected == peer.key) "CHOISI" else "ÉCRIRE") { selected = peer.key } } }
@@ -134,13 +142,20 @@ private fun MessengerScreen(peers: Map<String, String>, mesh: MeshManager, repor
     LazyColumn(Modifier.fillMaxWidth().height(190.dp)) {
         items(messages) { item ->
             Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), horizontalArrangement = if (item.mine) Arrangement.End else Arrangement.Start) {
-                Card(colors = CardDefaults.cardColors(containerColor = if (item.mine) Color(0xFF126B3D) else Panel)) { Column(Modifier.padding(10.dp).widthIn(max = 245.dp)) { Text(item.peer, color = Color.LightGray, fontSize = 10.sp); Text(item.text) } }
+                Card(colors = CardDefaults.cardColors(containerColor = if (item.mine) Color(0xFF126B3D) else Color(0xFF17345A))) {
+                    Column(Modifier.padding(10.dp).widthIn(max = 245.dp)) {
+                        Text(if (item.mine) "Envoyé à ${item.peer}" else "Reçu de ${item.peer}", color = Color.LightGray, fontSize = 10.sp)
+                        if (item.imageSource != null) AsyncImage(model = item.imageSource, contentDescription = "Photo BNET", modifier = Modifier.fillMaxWidth().heightIn(min = 90.dp, max = 230.dp).padding(top = 5.dp), contentScale = ContentScale.Crop)
+                        if (item.text.isNotBlank()) Text(item.text, modifier = Modifier.padding(top = 3.dp))
+                    }
+                }
             }
         }
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
         OutlinedTextField(draft, { draft = it.take(500) }, label = { Text("Message") }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp))
-        Spacer(Modifier.width(8.dp)); Button(onClick = { if (selected.isBlank()) report("Choisis d’abord un numéro.") else if (mesh.sendMessage(selected, draft)) draft = "" else report("Message non envoyé.") }) { Text("➤") }
+        Spacer(Modifier.width(6.dp)); FilledTonalButton(onClick = { if (selected.isBlank()) report("Choisis d’abord un numéro.") else photoPicker.launch("image/*") }) { Text("📷") }
+        Spacer(Modifier.width(6.dp)); Button(onClick = { if (selected.isBlank()) report("Choisis d’abord un numéro.") else if (mesh.sendMessage(selected, draft)) draft = "" else report("Message non envoyé.") }) { Text("➤") }
     }
 }
 
