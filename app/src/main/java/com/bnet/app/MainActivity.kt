@@ -13,6 +13,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -114,6 +115,15 @@ fun BnetScreen(myNumber: String, mesh: MeshManager) {
 @Composable
 private fun DialerScreen(peers: Map<String, String>, mesh: MeshManager, report: (String) -> Unit) {
     var dial by remember { mutableStateOf("") }
+    var showRecipients by remember { mutableStateOf(false) }
+    var transferTarget by remember { mutableStateOf("") }
+    val transfers by mesh.transfers.collectAsState()
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) {
+            val count = mesh.sendAttachments(transferTarget, uris)
+            report(if (count > 0) "$count fichier(s) ajouté(s) à la file d’envoi." else "Aucun fichier envoyé.")
+        }
+    }
     Text("Téléphones à portée", fontWeight = FontWeight.Bold)
     LazyColumn(Modifier.fillMaxWidth().heightIn(max = 130.dp)) {
         items(peers.entries.toList(), key = { it.key }) { peer ->
@@ -124,22 +134,42 @@ private fun DialerScreen(peers: Map<String, String>, mesh: MeshManager, report: 
     val keys = listOf("1","2","3","4","5","6","7","8","9","+","0","⌫")
     keys.chunked(3).forEach { row -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) { row.forEach { key -> TextButton(onClick = { if (key == "⌫") dial = dial.dropLast(1) else if (dial.length < 16) dial += key }, modifier = Modifier.size(86.dp, 48.dp)) { Text(key, fontSize = 22.sp) } } } }
     Button(onClick = { if (!mesh.callNumber(dial)) report("Numéro absent du radar.") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) { Text("APPELER SUR BNET") }
+    FilledTonalButton(onClick = { if (peers.isEmpty()) report("Aucun destinataire connecté.") else showRecipients = true }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) { Text("ENVOYER PHOTOS • VIDÉOS • AUDIO • FICHIERS") }
+    LazyColumn(Modifier.fillMaxWidth().heightIn(max = 105.dp)) {
+        items(transfers.takeLast(4).reversed(), key = { "${it.id}-${it.mine}" }) { transfer ->
+            Column(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(transfer.name, maxLines = 1, fontSize = 11.sp); Text("${transfer.progress}%", color = Green, fontSize = 11.sp) }
+                LinearProgressIndicator(progress = { transfer.progress / 100f }, modifier = Modifier.fillMaxWidth())
+            }
+        }
+    }
+    if (showRecipients) AlertDialog(
+        onDismissRequest = { showRecipients = false },
+        title = { Text("Choisir le destinataire") },
+        text = { Column { peers.forEach { (id, number) -> TextButton(onClick = { transferTarget = id; showRecipients = false; filePicker.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) { Text(number) } } } },
+        confirmButton = { TextButton(onClick = { showRecipients = false }) { Text("Annuler") } }
+    )
 }
 
 @Composable
 private fun MessengerScreen(peers: Map<String, String>, mesh: MeshManager, report: (String) -> Unit) {
     val messages by mesh.messages.collectAsState(); var selected by remember { mutableStateOf("") }; var draft by remember { mutableStateOf("") }
-    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) {
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
+        if (uris.isNotEmpty()) {
             if (selected.isBlank()) report("Choisis d’abord un numéro.")
-            else if (!mesh.sendPhoto(selected, uri)) report("Photo non envoyée.")
+            else {
+                val count = mesh.sendAttachments(selected, uris, true)
+                if (count == 0) report("Photos non envoyées.") else report("$count photo(s) en cours d’envoi.")
+            }
         }
     }
+    val listState = rememberLazyListState()
+    LaunchedEffect(messages.size) { if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex) }
     Text("Messagerie locale", fontWeight = FontWeight.Bold)
     if (peers.isEmpty()) Text("Active le radar pour trouver un contact.", color = Color.Gray, modifier = Modifier.padding(16.dp))
     LazyColumn(Modifier.fillMaxWidth().heightIn(max = 105.dp)) { items(peers.entries.toList(), key = { it.key }) { peer -> PeerCard(peer.value, if (selected == peer.key) "CHOISI" else "ÉCRIRE") { selected = peer.key } } }
     HorizontalDivider(Modifier.padding(vertical = 8.dp), color = Color.DarkGray)
-    LazyColumn(Modifier.fillMaxWidth().height(190.dp)) {
+    LazyColumn(Modifier.fillMaxWidth().height(190.dp), state = listState) {
         items(messages) { item ->
             Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), horizontalArrangement = if (item.mine) Arrangement.End else Arrangement.Start) {
                 Card(colors = CardDefaults.cardColors(containerColor = if (item.mine) Color(0xFF126B3D) else Color(0xFF17345A))) {
