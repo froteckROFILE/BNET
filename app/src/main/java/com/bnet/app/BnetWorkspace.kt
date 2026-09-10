@@ -89,6 +89,8 @@ private fun DirectoryPanel(contacts: List<InternetContact>, selected: String, ch
 
 @Composable
 private fun ConversationPanel(internet: InternetManager, selected: String, messages: List<InternetText>, notice: String, report: (String) -> Unit, modifier: Modifier) {
+    val callStatus by internet.callManager.status.collectAsState()
+    val callPeer by internet.callManager.peerNumber.collectAsState()
     val transition = rememberInfiniteTransition(label = "neon-border")
     val phase by transition.animateFloat(0f, 1f, infiniteRepeatable(tween(6500, easing = LinearEasing)), label = "phase")
     var draft by remember { mutableStateOf("") }
@@ -105,8 +107,15 @@ private fun ConversationPanel(internet: InternetManager, selected: String, messa
             }
         } else {
             Column(Modifier.fillMaxSize().padding(14.dp)) {
-                Text(selected, fontWeight = FontWeight.Black, fontSize = 18.sp); Text("Discussion BNET sécurisée", color = Neon, fontSize = 11.sp)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column { Text(selected, fontWeight = FontWeight.Black, fontSize = 18.sp); Text("Discussion BNET sécurisée", color = Neon, fontSize = 11.sp) }
+                    FilledIconButton(onClick = { internet.callManager.call(selected) }) { Text("☎") }
+                }
                 HorizontalDivider(Modifier.padding(vertical = 9.dp), color = Neon.copy(alpha = .25f))
+                if (callStatus != InternetCallStatus.IDLE) {
+                    InternetCallPanel(callStatus, callPeer, internet.callManager)
+                    HorizontalDivider(Modifier.padding(vertical = 7.dp), color = Neon.copy(alpha = .25f))
+                }
                 LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list) {
                     items(messages, key = { it.id }) { message -> NeonMessage(message, phase) }
                 }
@@ -120,6 +129,28 @@ private fun ConversationPanel(internet: InternetManager, selected: String, messa
                     }) { Text(if (recording) "■" else "🎙") }
                     Spacer(Modifier.width(5.dp)); Button(onClick = { val sent = draft; internet.sendText(selected, sent) { result -> report(result); if (result.isBlank()) draft = "" } }) { Text("➤") }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun InternetCallPanel(status: InternetCallStatus, peer: String, manager: InternetCallManager) {
+    var seconds by remember(status) { mutableIntStateOf(0) }
+    LaunchedEffect(status) { if (status == InternetCallStatus.CONNECTED) while (true) { delay(1000); seconds++ } }
+    val label = when (status) {
+        InternetCallStatus.INCOMING -> "APPEL ENTRANT"
+        InternetCallStatus.RINGING -> "APPEL EN COURS…"
+        InternetCallStatus.CONNECTING -> "CONNEXION CHIFFRÉE…"
+        InternetCallStatus.CONNECTED -> "CONNECTÉ • %02d:%02d".format(seconds / 60, seconds % 60)
+        else -> "APPEL TERMINÉ"
+    }
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF102D1D))) {
+        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column { Text(label, color = Neon, fontWeight = FontWeight.Black); Text(peer, fontSize = 12.sp, color = Color.LightGray) }
+            Row {
+                if (status == InternetCallStatus.INCOMING) Button(onClick = manager::accept) { Text("Décrocher") }
+                Spacer(Modifier.width(6.dp)); Button(onClick = manager::hangup, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB3261E))) { Text("Couper") }
             }
         }
     }
