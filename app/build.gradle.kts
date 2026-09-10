@@ -2,7 +2,7 @@ plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 android {
     namespace="com.bnet.app"; compileSdk=35
     defaultConfig {
-        applicationId="com.bnet.app"; minSdk=26; targetSdk=35; versionCode=8; versionName="0.7.1"
+        applicationId="com.bnet.sentinel"; minSdk=26; targetSdk=35; versionCode=1; versionName="0.1.0"
         buildConfigField("String", "SUPABASE_URL", "\"https://lqsplflluosfbinszoqn.supabase.co\"")
         buildConfigField("String", "SUPABASE_KEY", "\"sb_publishable_Gk-jPZm1hSqCQh_1ChRZog_098HlOlX\"")
     }
@@ -17,9 +17,9 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.foundation:foundation")
-    implementation("androidx.compose.animation:animation")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.core:core-ktx:1.15.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
+    implementation("androidx.compose.animation:animation")
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.android.gms:play-services-nearby:19.3.0")
