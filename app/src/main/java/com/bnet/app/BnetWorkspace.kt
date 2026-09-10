@@ -20,11 +20,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
 
-private val Neon = Color(0xFF39FF88)
-private val Night = Color(0xFF020805)
-private val Glass = Color(0xFF0B1811)
+private val Neon = Color(0xFFE62B3A)
+private val Night = Color(0xFFFFFBFC)
+private val Glass = Color(0xFFF4F6F8)
 
 @Composable
 fun InternetScreen(internet: InternetManager, number: String) {
@@ -36,6 +39,13 @@ fun InternetScreen(internet: InternetManager, number: String) {
     var addNumber by remember { mutableStateOf("") }
     var addName by remember { mutableStateOf("") }
     var showAdd by remember { mutableStateOf(false) }
+    var showProfile by remember { mutableStateOf(false) }
+    var profileName by remember { mutableStateOf("") }
+    var profilePhoto by remember { mutableStateOf<android.net.Uri?>(null) }
+    val savedName by internet.displayName.collectAsState()
+    val avatar by internet.avatarUrl.collectAsState()
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { profilePhoto = it }
+    LaunchedEffect(savedName) { if (profileName.isBlank()) profileName = savedName }
     LaunchedEffect(Unit) { while (true) { delay(3500); if (connected) { internet.loadContacts(); internet.loadTexts(); internet.loadVoices() } } }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -44,10 +54,10 @@ fun InternetScreen(internet: InternetManager, number: String) {
             Row(Modifier.fillMaxSize()) {
                 ConversationPanel(internet, selected, texts.filter { it.peer == selected }, notice, { notice = it }, Modifier.weight(.7f))
                 Spacer(Modifier.width(10.dp))
-                DirectoryPanel(contacts, selected, { selected = it }, { showAdd = true }, Modifier.weight(.3f))
+                DirectoryPanel(contacts, selected, { selected = it }, { showAdd = true }, { showProfile = true }, Modifier.weight(.3f))
             }
         } else if (selected.isBlank()) {
-            DirectoryPanel(contacts, selected, { selected = it }, { showAdd = true }, Modifier.fillMaxSize())
+            DirectoryPanel(contacts, selected, { selected = it }, { showAdd = true }, { showProfile = true }, Modifier.fillMaxSize())
         } else {
             Column(Modifier.fillMaxSize()) {
                 TextButton(onClick = { selected = "" }, modifier = Modifier.align(Alignment.Start)) { Text("‹ Répertoire") }
@@ -61,23 +71,41 @@ fun InternetScreen(internet: InternetManager, number: String) {
             confirmButton = { Button(onClick = { internet.addContact(addNumber, addName) { notice = it }; showAdd = false }) { Text("Ajouter") } },
             dismissButton = { TextButton(onClick = { showAdd = false }) { Text("Annuler") } }
         )
+        if (showProfile) AlertDialog(
+            onDismissRequest = { showProfile = false },
+            title = { Text("Mon profil BNET") },
+            text = {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    AsyncImage(model = profilePhoto ?: avatar, contentDescription = "Photo de profil", modifier = Modifier.size(92.dp))
+                    TextButton(onClick = { photoPicker.launch("image/*") }) { Text("Choisir une photo") }
+                    OutlinedTextField(profileName, { profileName = it.take(60) }, label = { Text("Nom affiché") }, singleLine = true)
+                    Text(number, color = Color(0xFF69727A), fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+                }
+            },
+            confirmButton = { Button(onClick = { internet.updateProfile(profileName, profilePhoto) { notice = it }; showProfile = false }) { Text("Enregistrer") } },
+            dismissButton = { TextButton(onClick = { showProfile = false }) { Text("Annuler") } }
+        )
     }
 }
 
 @Composable
-private fun DirectoryPanel(contacts: List<InternetContact>, selected: String, choose: (String) -> Unit, add: () -> Unit, modifier: Modifier) {
+private fun DirectoryPanel(contacts: List<InternetContact>, selected: String, choose: (String) -> Unit, add: () -> Unit, profile: () -> Unit, modifier: Modifier) {
     Card(modifier, colors = CardDefaults.cardColors(containerColor = Glass), shape = RoundedCornerShape(22.dp)) {
         Column(Modifier.fillMaxSize().padding(14.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column { Text("RÉPERTOIRE", color = Neon, fontWeight = FontWeight.Black); Text("${contacts.size} contact(s)", color = Color.Gray, fontSize = 11.sp) }
-                FilledIconButton(onClick = add) { Text("+") }
+                Row {
+                    FilledTonalIconButton(onClick = profile) { Text("●") }
+                    Spacer(Modifier.width(6.dp))
+                    FilledIconButton(onClick = add) { Text("+") }
+                }
             }
             HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Neon.copy(alpha = .25f))
             LazyColumn {
                 items(contacts, key = { it.id }) { contact ->
                     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { choose(contact.number) }, verticalAlignment = Alignment.CenterVertically) {
-                        Surface(shape = RoundedCornerShape(50), color = if (selected == contact.number) Neon else Color(0xFF173225), modifier = Modifier.size(44.dp)) {
-                            Box(contentAlignment = Alignment.Center) { Text(contact.nickname.take(1).ifBlank { "B" }, fontWeight = FontWeight.Black, color = if (selected == contact.number) Color.Black else Neon) }
+                        Surface(shape = RoundedCornerShape(50), color = if (selected == contact.number) Neon else Color(0xFFFFE8EB), modifier = Modifier.size(44.dp)) {
+                            Box(contentAlignment = Alignment.Center) { Text(contact.nickname.take(1).ifBlank { "B" }, fontWeight = FontWeight.Black, color = if (selected == contact.number) Color.White else Neon) }
                         }
                         Spacer(Modifier.width(10.dp)); Column { Text(contact.nickname.ifBlank { "Utilisateur BNET" }, fontWeight = FontWeight.Bold); Text(contact.number, color = Color.Gray, fontSize = 11.sp) }
                     }
@@ -102,8 +130,8 @@ private fun ConversationPanel(internet: InternetManager, selected: String, messa
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
                 Canvas(Modifier.size(150.dp)) { drawCircle(Neon.copy(alpha = .12f)); drawCircle(Neon, radius = 52.dp.toPx(), style = Stroke(3.dp.toPx())); drawCircle(Neon, radius = 8.dp.toPx()) }
                 Text("BNET", color = Neon, fontSize = 46.sp, fontWeight = FontWeight.Black, letterSpacing = 8.sp)
-                Text("BACK NETWORKING TECHNOLOGY", color = Color.White, letterSpacing = 2.sp, fontSize = 12.sp)
-                Text("Choisissez un numéro dans le répertoire", color = Color.Gray, modifier = Modifier.padding(top = 20.dp))
+                Text("BACK NETWORKING TECHNOLOGY", color = Color(0xFF30363B), letterSpacing = 2.sp, fontSize = 12.sp)
+                Text("Choisissez un numéro dans le répertoire", color = Color(0xFF69727A), modifier = Modifier.padding(top = 20.dp))
             }
         } else {
             Column(Modifier.fillMaxSize().padding(14.dp)) {
@@ -119,7 +147,7 @@ private fun ConversationPanel(internet: InternetManager, selected: String, messa
                 LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list) {
                     items(messages, key = { it.id }) { message -> NeonMessage(message, phase) }
                 }
-                if (notice.isNotBlank()) Text(notice, color = Color(0xFFFFB0A8), fontSize = 11.sp)
+                if (notice.isNotBlank()) Text(notice, color = Color(0xFFD22A3A), fontSize = 11.sp)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(draft, { draft = it.take(4000) }, placeholder = { Text("Écrire un message…") }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(22.dp), maxLines = 3)
                     Spacer(Modifier.width(5.dp))
@@ -145,9 +173,9 @@ private fun InternetCallPanel(status: InternetCallStatus, peer: String, manager:
         InternetCallStatus.CONNECTED -> "CONNECTÉ • %02d:%02d".format(seconds / 60, seconds % 60)
         else -> "APPEL TERMINÉ"
     }
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF102D1D))) {
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFFFFE8EB))) {
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Column { Text(label, color = Neon, fontWeight = FontWeight.Black); Text(peer, fontSize = 12.sp, color = Color.LightGray) }
+            Column { Text(label, color = Neon, fontWeight = FontWeight.Black); Text(peer, fontSize = 12.sp, color = Color(0xFF4F5961)) }
             Row {
                 if (status == InternetCallStatus.INCOMING) Button(onClick = manager::accept) { Text("Décrocher") }
                 Spacer(Modifier.width(6.dp)); Button(onClick = manager::hangup, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB3261E))) { Text("Couper") }
@@ -172,10 +200,10 @@ private fun NeonFrame(modifier: Modifier, phase: Float, content: @Composable () 
 @Composable
 private fun NeonMessage(message: InternetText, phase: Float) {
     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = if (message.mine) Arrangement.End else Arrangement.Start) {
-        Surface(color = if (message.mine) Color(0xFF0E5B35) else Color(0xFF172C23), shape = RoundedCornerShape(16.dp), tonalElevation = 3.dp) {
+        Surface(color = if (message.mine) Color(0xFFFFE8EB) else Color(0xFFF0F2F4), shape = RoundedCornerShape(16.dp), tonalElevation = 3.dp) {
             Box {
                 Canvas(Modifier.matchParentSize()) { drawRoundRect(Neon.copy(alpha = .38f + .22f * phase), cornerRadius = androidx.compose.ui.geometry.CornerRadius(16.dp.toPx()), style = Stroke(1.3.dp.toPx())) }
-                Column(Modifier.padding(11.dp).widthIn(max = 280.dp)) { Text(message.body); Text(message.createdAt.take(16).replace('T', ' '), color = Color.LightGray, fontSize = 9.sp, modifier = Modifier.align(Alignment.End)) }
+                Column(Modifier.padding(11.dp).widthIn(max = 280.dp)) { Text(message.body, color = Color(0xFF1C2328)); Text(message.createdAt.take(16).replace('T', ' '), color = Color(0xFF69727A), fontSize = 9.sp, modifier = Modifier.align(Alignment.End)) }
             }
         }
     }
