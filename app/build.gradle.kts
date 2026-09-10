@@ -2,7 +2,7 @@ plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 android {
     namespace="com.bnet.app"; compileSdk=35
     defaultConfig {
-        applicationId="com.bnet.sentinel"; minSdk=26; targetSdk=35; versionCode=1; versionName="0.1.0"
+        applicationId="com.bnet.sentinel"; minSdk=26; targetSdk=35; versionCode=2; versionName="0.2.0"
         buildConfigField("String", "SUPABASE_URL", "\"https://lqsplflluosfbinszoqn.supabase.co\"")
         buildConfigField("String", "SUPABASE_KEY", "\"sb_publishable_Gk-jPZm1hSqCQh_1ChRZog_098HlOlX\"")
     }
