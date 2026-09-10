@@ -21,6 +21,7 @@ enum class InternetCallStatus { IDLE, INCOMING, RINGING, CONNECTING, CONNECTED, 
 class InternetCallManager(private val context: Context) {
     val status = MutableStateFlow(InternetCallStatus.IDLE)
     val peerNumber = MutableStateFlow("")
+    val networkMessage = MutableStateFlow("Signalisation BNET en attente")
     private val client = OkHttpClient()
     private val handler = Handler(Looper.getMainLooper())
     private val prefs = context.getSharedPreferences("bnet_internet", Context.MODE_PRIVATE)
@@ -37,6 +38,7 @@ class InternetCallManager(private val context: Context) {
 
     fun start(number: String) {
         myNumber = number
+        networkMessage.value = "Réseau BNET en ligne • en attente d’appels"
         if (factory == null) {
             PeerConnectionFactory.initialize(PeerConnectionFactory.InitializationOptions.builder(context).createInitializationOptions())
             factory = PeerConnectionFactory.builder().createPeerConnectionFactory()
@@ -44,12 +46,12 @@ class InternetCallManager(private val context: Context) {
         if (!polling) { polling = true; poll() }
     }
 
-    fun call(number: String) {
-        if (status.value != InternetCallStatus.IDLE && status.value != InternetCallStatus.ENDED) return
-        val canonical = normalizeBnetNumber(number) ?: return
-        if (canonical == myNumber) return
+    fun call(number: String): Boolean {
+        if (status.value != InternetCallStatus.IDLE && status.value != InternetCallStatus.ENDED) return false
+        val canonical = normalizeBnetNumber(number) ?: run { networkMessage.value = "Numéro BNET invalide"; return false }
+        if (canonical == myNumber) { networkMessage.value = "Impossible de s’appeler soi-même"; return false }
         callId = UUID.randomUUID().toString(); peerNumber.value = canonical
-        status.value = InternetCallStatus.RINGING
+        status.value = InternetCallStatus.RINGING; networkMessage.value = "Appel Network • signal envoyé à $canonical"
         createPeer()
         peer?.createOffer(object : SimpleSdpObserver() {
             override fun onCreateSuccess(sdp: SessionDescription?) {
@@ -58,6 +60,7 @@ class InternetCallManager(private val context: Context) {
                 send("offer", JSONObject().put("sdp", actual.description))
             }
         }, MediaConstraints())
+        return true
     }
 
     fun accept() {
@@ -134,7 +137,7 @@ class InternetCallManager(private val context: Context) {
                 for (i in 0 until array.length()) {
                     val item = array.getJSONObject(i); receive(item); markProcessed(item.getString("id"), token)
                 }
-            }
+            } else if (code != 0) networkMessage.value = "Erreur réseau BNET ($code) • vérifiez SQL et Internet"
             handler.postDelayed(::poll, 900)
         }
     }
@@ -150,7 +153,7 @@ class InternetCallManager(private val context: Context) {
             }
             callId = incomingCallId; peerNumber.value = sender
             pendingOffer = SessionDescription(SessionDescription.Type.OFFER, payload.getString("sdp"))
-            status.value = InternetCallStatus.INCOMING
+            status.value = InternetCallStatus.INCOMING; networkMessage.value = "Appel Network entrant reçu"
             return
         }
         if (incomingCallId != callId) return
@@ -171,7 +174,9 @@ class InternetCallManager(private val context: Context) {
         val token = token() ?: return
         val body = JSONObject().put("sender_id", userId(token)).put("sender_number", myNumber)
             .put("recipient_number", peerNumber.value).put("call_id", callId).put("signal_type", type).put("payload", payload)
-        request("/rest/v1/call_signals", token, "POST", body.toString()) { _, _ -> }
+        request("/rest/v1/call_signals", token, "POST", body.toString()) { code, _ ->
+            if (code !in 200..299) { status.value = InternetCallStatus.IDLE; networkMessage.value = "Signal refusé ($code) • exécutez le SQL des appels" }
+        }
     }
 
     private fun markProcessed(id: String, token: String) = request("/rest/v1/call_signals?id=eq.$id", token, "PATCH", "{\"processed\":true}") { _, _ -> }
@@ -180,7 +185,7 @@ class InternetCallManager(private val context: Context) {
         peer?.close(); peer?.dispose(); peer = null
         audioTrack?.dispose(); audioTrack = null; audioSource?.dispose(); audioSource = null
         pendingOffer = null; pendingCandidates.clear(); configureAudio(false)
-        status.value = InternetCallStatus.ENDED
+        status.value = InternetCallStatus.ENDED; networkMessage.value = "Appel terminé"
         handler.postDelayed({ if (status.value == InternetCallStatus.ENDED) { status.value = InternetCallStatus.IDLE; peerNumber.value = ""; callId = "" } }, 1600)
     }
 
@@ -200,7 +205,7 @@ class InternetCallManager(private val context: Context) {
             .header("Authorization", "Bearer $token").header("Content-Type", "application/json").header("Prefer", "return=minimal")
         when (method) { "POST" -> builder.post((body ?: "").toRequestBody(jsonType)); "PATCH" -> builder.patch((body ?: "").toRequestBody(jsonType)); else -> builder.get() }
         client.newCall(builder.build()).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) = done(0, "")
+            override fun onFailure(call: Call, e: IOException) { networkMessage.value = "Connexion BNET indisponible"; done(0, "") }
             override fun onResponse(call: Call, response: Response) { val text = response.body?.string().orEmpty(); done(response.code, text) }
         })
     }
