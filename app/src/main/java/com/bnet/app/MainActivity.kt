@@ -72,15 +72,16 @@ private fun BnetSplash() {
                 drawCircle(Green, 8.dp.toPx(), Offset(center.x + r * cos(rad).toFloat(), center.y + r * sin(rad).toFloat()))
             }
             Text(title.take(shown), fontSize = 48.sp, fontWeight = FontWeight.Black, letterSpacing = 9.sp, color = Color.White)
-            Spacer(Modifier.height(14.dp)); Text("RÉSEAU HUMAIN LOCAL", color = Green, letterSpacing = 2.sp)
-            Spacer(Modifier.height(40.dp)); Text("développé par ABDNOUR LABED", color = Color.Gray, fontSize = 13.sp)
+            Spacer(Modifier.height(14.dp)); Text("AU SERVICE DES HUMAINS", color = Green, letterSpacing = 2.sp)
+            Spacer(Modifier.height(8.dp)); Text("BACK NETWORKING TECHNOLOGY", color = Color.White, letterSpacing = 2.sp, fontSize = 12.sp)
+            Spacer(Modifier.height(34.dp)); Text("développée par LABED ABDENOUR", color = Color.Gray, fontSize = 13.sp)
         }
     }
 }
 
 @Composable
 fun BnetScreen(myNumber: String, mesh: MeshManager, internet: InternetManager) {
-    var tab by remember { mutableIntStateOf(0) }
+    var tab by remember { mutableIntStateOf(2) }
     var message by remember { mutableStateOf("") }
     val status by mesh.status.collectAsState(); val peers by mesh.peers.collectAsState(); val online by mesh.onlinePeers.collectAsState(); val callState by mesh.callState.collectAsState(); val remote by mesh.remoteNumber.collectAsState()
     val internetNumber by internet.serverNumber.collectAsState()
@@ -118,7 +119,7 @@ fun BnetScreen(myNumber: String, mesh: MeshManager, internet: InternetManager) {
 }
 
 @Composable
-private fun InternetScreen(internet: InternetManager, number: String) {
+private fun InternetScreenLegacy(internet: InternetManager, number: String) {
     val status by internet.status.collectAsState()
     val connected by internet.connected.collectAsState()
     val contacts by internet.contacts.collectAsState()
