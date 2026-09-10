@@ -2,7 +2,7 @@ plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 android {
     namespace="com.bnet.app"; compileSdk=35
     defaultConfig {
-        applicationId="com.bnet.app"; minSdk=26; targetSdk=35; versionCode=8; versionName="0.7.1"
+        applicationId="com.bnet.app"; minSdk=26; targetSdk=35; versionCode=9; versionName="0.8.0"
         buildConfigField("String", "SUPABASE_URL", "\"https://lqsplflluosfbinszoqn.supabase.co\"")
         buildConfigField("String", "SUPABASE_KEY", "\"sb_publishable_Gk-jPZm1hSqCQh_1ChRZog_098HlOlX\"")
     }
@@ -23,4 +23,5 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.android.gms:play-services-nearby:19.3.0")
+    implementation("io.github.webrtc-sdk:android:125.6422.07")
 }
