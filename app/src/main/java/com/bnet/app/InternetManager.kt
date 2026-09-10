@@ -19,6 +19,7 @@ import java.util.UUID
 data class InternetContact(val id: String, val number: String, val nickname: String)
 data class InternetVoice(val id: String, val peer: String, val mine: Boolean, val mediaPath: String, val createdAt: String)
 data class SharedContact(val id: String, val number: String, val mine: Boolean)
+data class InternetText(val id: String, val peer: String, val mine: Boolean, val body: String, val createdAt: String)
 
 class InternetManager(private val context: Context) {
     val status = MutableStateFlow("Internet BNET non connecté")
@@ -27,6 +28,7 @@ class InternetManager(private val context: Context) {
     val contacts = MutableStateFlow<List<InternetContact>>(emptyList())
     val voices = MutableStateFlow<List<InternetVoice>>(emptyList())
     val sharedContacts = MutableStateFlow<List<SharedContact>>(emptyList())
+    val texts = MutableStateFlow<List<InternetText>>(emptyList())
     val displayName = MutableStateFlow("")
     val avatarUrl = MutableStateFlow("")
     private val client = OkHttpClient()
@@ -83,6 +85,7 @@ class InternetManager(private val context: Context) {
                 loadContacts()
                 loadVoices()
                 loadSharedContacts()
+                loadTexts()
             }
         })
     }
@@ -152,6 +155,41 @@ class InternetManager(private val context: Context) {
             sharedContacts.value = runCatching { val a = JSONArray(body); List(a.length()) { i -> a.getJSONObject(i).let { j ->
                 SharedContact(j.getString("id"), j.getString("shared_contact_number"), j.getString("sender_id") == uid)
             } } }.getOrDefault(emptyList())
+        }
+    }
+
+    fun sendText(recipient: String, message: String, done: (String) -> Unit) {
+        val token = token() ?: return done("Internet BNET non connecté")
+        val clean = message.trim()
+        if (recipient.isBlank()) return done("Choisis un contact")
+        if (clean.isBlank()) return done("Écris un message")
+        val data = JSONObject().put("sender_id", currentUserId(token)).put("recipient_number", recipient)
+            .put("body", clean.take(4000)).put("message_type", "text")
+        api("/rest/v1/internet_messages", token, "POST", data.toString()) { code, _ ->
+            if (code in 200..299) { loadTexts(); done("") } else done("Message refusé ($code)")
+        }
+    }
+
+    fun loadTexts() {
+        val token = token() ?: return
+        val uid = currentUserId(token)
+        api("/rest/v1/internet_messages?message_type=eq.text&select=id,sender_id,recipient_number,body,created_at&order=created_at.asc&limit=200", token) { code, body ->
+            if (code !in 200..299) return@api
+            val parsed = runCatching { val a = JSONArray(body); List(a.length()) { i -> a.getJSONObject(i).let { j ->
+                val mine = j.getString("sender_id") == uid
+                InternetText(j.getString("id"), if (mine) j.getString("recipient_number") else j.getString("sender_id"), mine, j.getString("body"), j.optString("created_at"))
+            } } }.getOrDefault(emptyList())
+            texts.value = parsed
+            parsed.filter { !it.mine && !it.peer.startsWith("+") }.map { it.peer }.distinct().forEach { senderId -> resolveSender(senderId) }
+        }
+    }
+
+    private fun resolveSender(senderId: String) {
+        val token = token() ?: return
+        api("/rest/v1/profiles?id=eq.$senderId&select=bnet_number", token) { code, body ->
+            if (code !in 200..299) return@api
+            val number = runCatching { JSONArray(body).optJSONObject(0)?.optString("bnet_number").orEmpty() }.getOrDefault("")
+            if (number.isNotBlank()) texts.value = texts.value.map { if (!it.mine && it.peer == senderId) it.copy(peer = number) else it }
         }
     }
 
