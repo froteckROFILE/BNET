@@ -121,31 +121,86 @@ fun BnetScreen(myNumber: String, mesh: MeshManager, internet: InternetManager) {
 private fun InternetScreen(internet: InternetManager, number: String) {
     val status by internet.status.collectAsState()
     val connected by internet.connected.collectAsState()
+    val contacts by internet.contacts.collectAsState()
+    val voices by internet.voices.collectAsState()
+    val savedName by internet.displayName.collectAsState()
+    val avatar by internet.avatarUrl.collectAsState()
+    var section by remember { mutableIntStateOf(0) }
+    var contactNumber by remember { mutableStateOf("") }
+    var nickname by remember { mutableStateOf("") }
+    var selected by remember { mutableStateOf("") }
+    var profileName by remember { mutableStateOf("") }
+    var notice by remember { mutableStateOf("") }
+    var recording by remember { mutableStateOf(false) }
+    var pickedAvatar by remember { mutableStateOf<android.net.Uri?>(null) }
+    val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> pickedAvatar = uri }
+    LaunchedEffect(savedName) { if (profileName.isBlank()) profileName = savedName }
+    LaunchedEffect(Unit) { while (true) { delay(5000); if (connected) { internet.loadContacts(); internet.loadVoices() } } }
     Column(
-        Modifier.fillMaxWidth().padding(top = 18.dp),
+        Modifier.fillMaxWidth().padding(top = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Canvas(Modifier.size(130.dp)) {
-            drawCircle(if (connected) Green.copy(alpha = .14f) else Color.Gray.copy(alpha = .12f))
-            drawCircle(if (connected) Green else Color.Gray, radius = 12.dp.toPx())
-            drawCircle(if (connected) Green.copy(alpha = .55f) else Color.Gray.copy(alpha = .45f), radius = 38.dp.toPx(), style = Stroke(3.dp.toPx()))
-            drawCircle(if (connected) Green.copy(alpha = .25f) else Color.Gray.copy(alpha = .2f), radius = 60.dp.toPx(), style = Stroke(2.dp.toPx()))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column { Text(if (connected) "● INTERNET ACTIF" else "○ INTERNET", color = if (connected) Green else Color.Gray, fontWeight = FontWeight.Bold); Text(number.ifBlank { status }, fontSize = 13.sp) }
+            TextButton(onClick = internet::connect) { Text("Actualiser") }
         }
-        Text(if (connected) "BNET INTERNET ACTIF" else "BNET INTERNET", color = if (connected) Green else Color.White, fontWeight = FontWeight.Black, fontSize = 20.sp)
+        TabRow(selectedTabIndex = section, containerColor = Panel) {
+            listOf("Répertoire", "Vocaux", "Profil").forEachIndexed { i, title -> Tab(selected = section == i, onClick = { section = i }, text = { Text(title, fontSize = 12.sp) }) }
+        }
         Spacer(Modifier.height(10.dp))
-        Text(status, color = Color.LightGray, textAlign = TextAlign.Center)
-        if (number.isNotBlank()) {
-            Spacer(Modifier.height(22.dp))
-            Text("VOTRE NUMÉRO INTERNET", color = Color.Gray, fontSize = 12.sp, letterSpacing = 1.sp)
-            Text(number, color = Color.White, fontSize = 27.sp, fontWeight = FontWeight.Bold)
-            Text("Numéro unique attribué par le serveur BNET", color = Color.Gray, fontSize = 12.sp)
+        when (section) {
+            0 -> {
+                Text("RÉPERTOIRE BNET PRIVÉ", color = Green, fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(contactNumber, { contactNumber = it.take(16) }, label = { Text("Numéro BNET") }, modifier = Modifier.weight(1f), singleLine = true)
+                    Spacer(Modifier.width(6.dp)); Button(onClick = { internet.addContact(contactNumber, nickname) { notice = it } }) { Text("+") }
+                }
+                OutlinedTextField(nickname, { nickname = it.take(40) }, label = { Text("Nom du contact") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 250.dp)) {
+                    items(contacts, key = { it.id }) { contact ->
+                        Card(Modifier.fillMaxWidth().padding(top = 5.dp).clickable { selected = contact.number }, colors = CardDefaults.cardColors(containerColor = if (selected == contact.number) Color(0xFF16472E) else Panel)) {
+                            Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Column { Text(contact.nickname.ifBlank { "Contact BNET" }, fontWeight = FontWeight.Bold); Text(contact.number, color = Color.LightGray, fontSize = 12.sp) }
+                                TextButton(onClick = { internet.deleteContact(contact.id) }) { Text("Supprimer", color = Color(0xFFFF8A80)) }
+                            }
+                        }
+                    }
+                }
+                Text("Touchez un contact pour le sélectionner avant un message vocal.", color = Color.Gray, fontSize = 11.sp)
+            }
+            1 -> {
+                Text("MESSAGES VOCAUX", color = Green, fontWeight = FontWeight.Bold)
+                Text(if (selected.isBlank()) "Sélectionne d’abord un contact dans Répertoire" else "Destinataire : $selected", color = Color.LightGray, fontSize = 12.sp)
+                Spacer(Modifier.height(8.dp))
+                Button(onClick = {
+                    if (!recording) { notice = internet.startVoice(); recording = notice.startsWith("Enregistrement") }
+                    else { internet.stopVoiceAndSend(selected) { notice = it }; recording = false }
+                }, enabled = selected.isNotBlank(), colors = ButtonDefaults.buttonColors(containerColor = if (recording) Color(0xFFB91C1C) else Green), modifier = Modifier.fillMaxWidth()) {
+                    Text(if (recording) "■ ARRÊTER ET ENVOYER" else "● ENREGISTRER UN VOCAL", color = Color.Black)
+                }
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 280.dp)) {
+                    items(voices, key = { it.id }) { voice ->
+                        Card(Modifier.fillMaxWidth().padding(top = 5.dp), colors = CardDefaults.cardColors(containerColor = if (voice.mine) Color(0xFF126B3D) else Color(0xFF17345A))) {
+                            Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Column { Text(if (voice.mine) "Envoyé à ${voice.peer}" else "Message vocal reçu"); Text(voice.createdAt.take(16).replace('T', ' '), fontSize = 10.sp, color = Color.LightGray) }
+                                Button(onClick = { internet.playVoice(voice.mediaPath) { notice = it } }) { Text("▶") }
+                            }
+                        }
+                    }
+                }
+            }
+            else -> {
+                Text("MON PROFIL BNET", color = Green, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                AsyncImage(model = pickedAvatar ?: avatar, contentDescription = "Photo de profil", modifier = Modifier.size(120.dp), contentScale = ContentScale.Crop)
+                TextButton(onClick = { avatarPicker.launch("image/*") }) { Text("Changer la photo") }
+                OutlinedTextField(profileName, { profileName = it.take(60) }, label = { Text("Nom affiché") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                Spacer(Modifier.height(8.dp))
+                Button(onClick = { internet.updateProfile(profileName, pickedAvatar) { notice = it } }, modifier = Modifier.fillMaxWidth()) { Text("ENREGISTRER LE PROFIL") }
+                Text(number, color = Color.LightGray, modifier = Modifier.padding(top = 10.dp))
+            }
         }
-        Spacer(Modifier.height(28.dp))
-        Button(onClick = internet::connect, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
-            Text(if (connected) "ACTUALISER LA CONNEXION" else "CONNECTER INTERNET BNET")
-        }
-        Spacer(Modifier.height(14.dp))
-        Text("Cette étape valide l'identité Internet. Les appels WebRTC seront activés dans la prochaine version.", color = Color.Gray, fontSize = 12.sp, textAlign = TextAlign.Center)
+        if (notice.isNotBlank()) Text(notice, color = if (notice.contains("refus") || notice.contains("Échec") || notice.contains("invalide")) Color(0xFFFF8A80) else Green, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp), textAlign = TextAlign.Center)
     }
 }
 
