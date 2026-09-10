@@ -123,6 +123,7 @@ private fun InternetScreen(internet: InternetManager, number: String) {
     val connected by internet.connected.collectAsState()
     val contacts by internet.contacts.collectAsState()
     val voices by internet.voices.collectAsState()
+    val sharedContacts by internet.sharedContacts.collectAsState()
     val savedName by internet.displayName.collectAsState()
     val avatar by internet.avatarUrl.collectAsState()
     var section by remember { mutableIntStateOf(0) }
@@ -135,7 +136,7 @@ private fun InternetScreen(internet: InternetManager, number: String) {
     var pickedAvatar by remember { mutableStateOf<android.net.Uri?>(null) }
     val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> pickedAvatar = uri }
     LaunchedEffect(savedName) { if (profileName.isBlank()) profileName = savedName }
-    LaunchedEffect(Unit) { while (true) { delay(5000); if (connected) { internet.loadContacts(); internet.loadVoices() } } }
+    LaunchedEffect(Unit) { while (true) { delay(5000); if (connected) { internet.loadContacts(); internet.loadVoices(); internet.loadSharedContacts() } } }
     Column(
         Modifier.fillMaxWidth().padding(top = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -161,12 +162,24 @@ private fun InternetScreen(internet: InternetManager, number: String) {
                         Card(Modifier.fillMaxWidth().padding(top = 5.dp).clickable { selected = contact.number }, colors = CardDefaults.cardColors(containerColor = if (selected == contact.number) Color(0xFF16472E) else Panel)) {
                             Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                 Column { Text(contact.nickname.ifBlank { "Contact BNET" }, fontWeight = FontWeight.Bold); Text(contact.number, color = Color.LightGray, fontSize = 12.sp) }
-                                TextButton(onClick = { internet.deleteContact(contact.id) }) { Text("Supprimer", color = Color(0xFFFF8A80)) }
+                                Row {
+                                    TextButton(onClick = { internet.shareContact(selected, contact.number) { notice = it } }) { Text("Partager", fontSize = 11.sp) }
+                                    TextButton(onClick = { internet.deleteContact(contact.id) }) { Text("Supprimer", color = Color(0xFFFF8A80), fontSize = 11.sp) }
+                                }
                             }
                         }
                     }
                 }
                 Text("Touchez un contact pour le sélectionner avant un message vocal.", color = Color.Gray, fontSize = 11.sp)
+                if (sharedContacts.any { !it.mine }) {
+                    Text("CONTACTS REÇUS", color = Green, fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+                    sharedContacts.filter { !it.mine }.take(4).forEach { shared ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text(shared.number)
+                            TextButton(onClick = { internet.addContact(shared.number, "Contact partagé") { notice = it } }) { Text("Ajouter") }
+                        }
+                    }
+                }
             }
             1 -> {
                 Text("MESSAGES VOCAUX", color = Green, fontWeight = FontWeight.Bold)
