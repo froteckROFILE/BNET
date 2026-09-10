@@ -115,27 +115,58 @@ class InternetManager(private val context: Context) {
     fun loadContacts() {
         val token = token() ?: return
         api("/rest/v1/contacts?select=id,contact_number,nickname&order=created_at.desc", token) { code, body ->
-            if (code !in 200..299) return@api
-            contacts.value = runCatching {
+            val remote = if (code !in 200..299) emptyList() else runCatching {
                 val array = JSONArray(body)
                 List(array.length()) { i -> array.getJSONObject(i).let { InternetContact(it.getString("id"), it.getString("contact_number"), it.optString("nickname")) } }
             }.getOrDefault(emptyList())
+            val all = (remote + loadLocalContacts()).distinctBy { it.number }
+            contacts.value = all
         }
     }
 
     fun addContact(number: String, nickname: String, done: (String) -> Unit) {
         val token = token() ?: return done("Internet BNET non connecté")
-        if (!number.matches(Regex("\\+\\d{6}-\\d{8}"))) return done("Format du numéro invalide")
-        val body = JSONObject().put("owner_id", currentUserId(token)).put("contact_number", number).put("nickname", nickname).toString()
+        val canonical = normalizeBnetNumber(number) ?: return done("Format invalide. Exemple : +260910-12345678")
+        val cleanName = nickname.trim().ifBlank { "Contact BNET" }
+        val body = JSONObject().put("owner_id", currentUserId(token)).put("contact_number", canonical).put("nickname", cleanName).toString()
         api("/rest/v1/contacts", token, "POST", body) { code, _ ->
-            if (code in 200..299) { loadContacts(); done("Contact ajouté") }
-            else if (code == 409) done("Ce contact existe déjà") else done("Numéro introuvable ou refusé ($code)")
+            if (code in 200..299) { loadContacts(); done("Contact ajouté : $canonical") }
+            else if (code == 409) done("Ce contact existe déjà")
+            else { saveLocalContact(canonical, cleanName); done("Contact enregistré sur ce téléphone. Le serveur a refusé ($code).") }
         }
     }
 
     fun deleteContact(id: String) {
         val token = token() ?: return
-        api("/rest/v1/contacts?id=eq.$id", token, "DELETE") { code, _ -> if (code in 200..299) loadContacts() }
+        api("/rest/v1/contacts?id=eq.$id", token, "DELETE") { code, _ ->
+            removeLocalContact(id)
+            if (code in 200..299) loadContacts() else contacts.value = loadLocalContacts()
+        }
+    }
+
+    private fun normalizeBnetNumber(value: String): String? {
+        val compact = value.trim().replace(" ", "")
+        val withPlus = if (compact.startsWith("+")) compact else "+$compact"
+        val digits = withPlus.filter { it.isDigit() }
+        if (digits.length != 14) return null
+        return "+${digits.substring(0, 6)}-${digits.substring(6)}"
+    }
+
+    private fun loadLocalContacts(): List<InternetContact> = runCatching {
+        val array = JSONArray(prefs.getString("local_contacts", "[]"))
+        List(array.length()) { i -> array.getJSONObject(i).let { InternetContact("local-${it.getString("number")}", it.getString("number"), it.optString("name")) } }
+    }.getOrDefault(emptyList())
+
+    private fun saveLocalContact(number: String, name: String) {
+        val all = loadLocalContacts().filterNot { it.number == number } + InternetContact("local-$number", number, name)
+        val array = JSONArray(); all.forEach { array.put(JSONObject().put("number", it.number).put("name", it.nickname)) }
+        prefs.edit().putString("local_contacts", array.toString()).apply(); contacts.value = (contacts.value + all).distinctBy { it.number }
+    }
+
+    private fun removeLocalContact(id: String) {
+        val all = loadLocalContacts().filterNot { it.id == id }
+        val array = JSONArray(); all.forEach { array.put(JSONObject().put("number", it.number).put("name", it.nickname)) }
+        prefs.edit().putString("local_contacts", array.toString()).apply()
     }
 
     fun shareContact(recipient: String, sharedNumber: String, done: (String) -> Unit) {
