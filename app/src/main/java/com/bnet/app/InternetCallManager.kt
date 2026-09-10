@@ -46,8 +46,9 @@ class InternetCallManager(private val context: Context) {
 
     fun call(number: String) {
         if (status.value != InternetCallStatus.IDLE && status.value != InternetCallStatus.ENDED) return
-        if (number.isBlank() || number == myNumber) return
-        callId = UUID.randomUUID().toString(); peerNumber.value = number
+        val canonical = normalizeBnetNumber(number) ?: return
+        if (canonical == myNumber) return
+        callId = UUID.randomUUID().toString(); peerNumber.value = canonical
         status.value = InternetCallStatus.RINGING
         createPeer()
         peer?.createOffer(object : SimpleSdpObserver() {
@@ -184,6 +185,12 @@ class InternetCallManager(private val context: Context) {
     }
 
     private fun token() = prefs.getString("access_token", null)
+    private fun normalizeBnetNumber(value: String): String? {
+        val compact = value.trim().replace(" ", "")
+        val digits = compact.filter { it.isDigit() }
+        if (digits.length != 14) return null
+        return "+${digits.substring(0, 6)}-${digits.substring(6)}"
+    }
     private fun userId(token: String): String = runCatching {
         val decoded = Base64.decode(token.split('.')[1], Base64.URL_SAFE or Base64.NO_WRAP); JSONObject(String(decoded)).optString("sub")
     }.getOrDefault("")
