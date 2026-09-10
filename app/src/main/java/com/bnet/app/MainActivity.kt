@@ -43,15 +43,16 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val number = BnetNumber.getOrCreate(this)
         val mesh = MeshManager(this, number)
-        setContent { MaterialTheme(colorScheme = darkColorScheme(primary = Green, surface = Panel)) { BnetApp(number, mesh) } }
+        val internet = InternetManager(this)
+        setContent { MaterialTheme(colorScheme = darkColorScheme(primary = Green, surface = Panel)) { BnetApp(number, mesh, internet) } }
     }
 }
 
 @Composable
-private fun BnetApp(number: String, mesh: MeshManager) {
+private fun BnetApp(number: String, mesh: MeshManager, internet: InternetManager) {
     var splash by remember { mutableStateOf(true) }
     LaunchedEffect(Unit) { delay(3400); splash = false }
-    if (splash) BnetSplash() else BnetScreen(number, mesh)
+    if (splash) BnetSplash() else BnetScreen(number, mesh, internet)
 }
 
 @Composable
@@ -78,10 +79,11 @@ private fun BnetSplash() {
 }
 
 @Composable
-fun BnetScreen(myNumber: String, mesh: MeshManager) {
+fun BnetScreen(myNumber: String, mesh: MeshManager, internet: InternetManager) {
     var tab by remember { mutableIntStateOf(0) }
     var message by remember { mutableStateOf("") }
     val status by mesh.status.collectAsState(); val peers by mesh.peers.collectAsState(); val online by mesh.onlinePeers.collectAsState(); val callState by mesh.callState.collectAsState(); val remote by mesh.remoteNumber.collectAsState()
+    val internetNumber by internet.serverNumber.collectAsState()
     val permissions = buildList {
         add(Manifest.permission.RECORD_AUDIO)
         if (Build.VERSION.SDK_INT >= 31) { add(Manifest.permission.BLUETOOTH_SCAN); add(Manifest.permission.BLUETOOTH_ADVERTISE); add(Manifest.permission.BLUETOOTH_CONNECT) }
@@ -92,6 +94,7 @@ fun BnetScreen(myNumber: String, mesh: MeshManager) {
         if (grants.values.all { it }) mesh.start() else message = "Autorise les appareils à proximité et le microphone."
     }
     DisposableEffect(Unit) { onDispose { mesh.stop() } }
+    LaunchedEffect(Unit) { internet.connect() }
     Surface(Modifier.fillMaxSize(), color = Dark) {
         Column(Modifier.fillMaxSize().padding(16.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -101,14 +104,48 @@ fun BnetScreen(myNumber: String, mesh: MeshManager) {
             Text(status, color = Color.Gray, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
             if (callState != CallState.IDLE) CallPanel(callState, remote, mesh)
             else if (tab == 0) DialerScreen(online, mesh) { message = it }
-            else MessengerScreen(online, mesh) { message = it }
+            else if (tab == 1) MessengerScreen(online, mesh) { message = it }
+            else InternetScreen(internet, internetNumber)
             if (message.isNotBlank()) Text(message, color = Color(0xFFFF9B93), fontSize = 13.sp, modifier = Modifier.padding(6.dp))
             Spacer(Modifier.weight(1f))
             NavigationBar(containerColor = Panel) {
                 NavigationBarItem(selected = tab == 0, onClick = { tab = 0 }, icon = { Text("☎", fontSize = 22.sp) }, label = { Text("Appels") })
                 NavigationBarItem(selected = tab == 1, onClick = { tab = 1 }, icon = { Text("✉", fontSize = 22.sp) }, label = { Text("Messages") })
+                NavigationBarItem(selected = tab == 2, onClick = { tab = 2 }, icon = { Text("◉", fontSize = 22.sp) }, label = { Text("Internet") })
             }
         }
+    }
+}
+
+@Composable
+private fun InternetScreen(internet: InternetManager, number: String) {
+    val status by internet.status.collectAsState()
+    val connected by internet.connected.collectAsState()
+    Column(
+        Modifier.fillMaxWidth().padding(top = 18.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Canvas(Modifier.size(130.dp)) {
+            drawCircle(if (connected) Green.copy(alpha = .14f) else Color.Gray.copy(alpha = .12f))
+            drawCircle(if (connected) Green else Color.Gray, radius = 12.dp.toPx())
+            drawCircle(if (connected) Green.copy(alpha = .55f) else Color.Gray.copy(alpha = .45f), radius = 38.dp.toPx(), style = Stroke(3.dp.toPx()))
+            drawCircle(if (connected) Green.copy(alpha = .25f) else Color.Gray.copy(alpha = .2f), radius = 60.dp.toPx(), style = Stroke(2.dp.toPx()))
+        }
+        Text(if (connected) "BNET INTERNET ACTIF" else "BNET INTERNET", color = if (connected) Green else Color.White, fontWeight = FontWeight.Black, fontSize = 20.sp)
+        Spacer(Modifier.height(10.dp))
+        Text(status, color = Color.LightGray, textAlign = TextAlign.Center)
+        if (number.isNotBlank()) {
+            Spacer(Modifier.height(22.dp))
+            Text("VOTRE NUMÉRO INTERNET", color = Color.Gray, fontSize = 12.sp, letterSpacing = 1.sp)
+            Text(number, color = Color.White, fontSize = 27.sp, fontWeight = FontWeight.Bold)
+            Text("Numéro unique attribué par le serveur BNET", color = Color.Gray, fontSize = 12.sp)
+        }
+        Spacer(Modifier.height(28.dp))
+        Button(onClick = internet::connect, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
+            Text(if (connected) "ACTUALISER LA CONNEXION" else "CONNECTER INTERNET BNET")
+        }
+        Spacer(Modifier.height(14.dp))
+        Text("Cette étape valide l'identité Internet. Les appels WebRTC seront activés dans la prochaine version.", color = Color.Gray, fontSize = 12.sp, textAlign = TextAlign.Center)
     }
 }
 
