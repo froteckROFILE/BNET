@@ -96,7 +96,7 @@ private fun RiskGauge(score: Int) {
 
 private fun scanDevice(context: Context): ScanResult {
     val findings = mutableListOf<Finding>()
-    fun settings(action: String) = { runCatching { context.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }
+    fun settings(action: String): () -> Unit = { runCatching { context.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }; Unit }
     val cm = context.getSystemService(ConnectivityManager::class.java)
     val caps = cm.getNetworkCapabilities(cm.activeNetwork)
     val vpn = caps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
@@ -129,8 +129,9 @@ private fun scanDevice(context: Context): ScanResult {
     findings += Finding("Installations hors boutique", if (sideloaded.isEmpty()) "Aucune installation sans source reconnue." else sideloaded.take(15).joinToString(), if (sideloaded.isEmpty()) 0 else 2, settings(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES))
     val rx = formatBytes(TrafficStats.getTotalRxBytes()); val tx = formatBytes(TrafficStats.getTotalTxBytes())
     findings += Finding("Transferts réseau depuis le démarrage", "Reçu : $rx • Envoyé : $tx. Un volume élevé seul ne prouve pas une fuite.", 1, settings(Settings.ACTION_DATA_USAGE_SETTINGS))
-    findings += Finding("Contrôle Play Protect", "Lancez aussi une analyse Play Protect : Sentinel ne remplace pas l’antivirus système.", 1) { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://play.google.com/store/apps/details?id=com.google.android.gms")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }
-    val score = findings.sumOf { when (it.severity) { 4 -> 28; 3 -> 16; 2 -> 8; else -> 0 } }.coerceAtMost(100)
+    val playProtect: () -> Unit = { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://play.google.com/store/apps/details?id=com.google.android.gms")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }; Unit }
+    findings += Finding("Contrôle Play Protect", "Lancez aussi une analyse Play Protect : Sentinel ne remplace pas l’antivirus système.", 1, playProtect)
+    val score: Int = findings.fold(0) { total, item -> total + when (item.severity) { 4 -> 28; 3 -> 16; 2 -> 8; else -> 0 } }.coerceAtMost(100)
     return ScanResult(score, findings.sortedByDescending { it.severity }, apps.size)
 }
 
