@@ -11,6 +11,9 @@ import android.net.NetworkCapabilities
 import android.net.TrafficStats
 import android.os.Bundle
 import android.provider.Settings
+import android.telephony.TelephonyManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Canvas
@@ -32,13 +35,16 @@ import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationManagerCompat
 import java.io.File
 import java.text.DecimalFormat
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 private val Green = Color(0xFF32FF88)
 private val Dark = Color(0xFF020805)
 private val Panel = Color(0xFF0B1911)
 
 data class Finding(val title: String, val detail: String, val severity: Int, val action: (() -> Unit)? = null)
-data class ScanResult(val score: Int, val findings: List<Finding>, val inspectedApps: Int)
+data class ScanResult(val score: Int, val findings: List<Finding>, val inspectedApps: Int, val alerts: Int)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -52,9 +58,16 @@ private fun SentinelApp(context: Context) {
     var result by remember { mutableStateOf<ScanResult?>(null) }
     var scanning by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf<Finding?>(null) }
-    LaunchedEffect(Unit) { scanning = true; result = scanDevice(context); scanning = false }
+    val permissions = arrayOf(Manifest.permission.READ_PHONE_STATE, Manifest.permission.ACCESS_FINE_LOCATION)
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        scanning = true; result = scanDevice(context); scanning = false
+    }
+    LaunchedEffect(Unit) {
+        if (permissions.any { context.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }) permissionLauncher.launch(permissions)
+        else { scanning = true; result = scanDevice(context); scanning = false }
+    }
     Surface(Modifier.fillMaxSize(), color = Dark) {
-        Column(Modifier.fillMaxSize().padding(16.dp)) {
+        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(16.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column { Text("BNET SENTINEL", color = Green, fontSize = 25.sp, fontWeight = FontWeight.Black); Text("AUDIT LOCAL DE SÉCURITÉ", color = Color.Gray, fontSize = 11.sp, letterSpacing = 2.sp) }
                 Button(onClick = { scanning = true; result = scanDevice(context); scanning = false }) { Text("ANALYSER") }
@@ -64,7 +77,7 @@ private fun SentinelApp(context: Context) {
             else {
                 val r = result!!
                 RiskGauge(r.score)
-                Text("${r.inspectedApps} applications contrôlées • analyse exécutée uniquement sur ce téléphone", color = Color.Gray, fontSize = 11.sp, modifier = Modifier.padding(vertical = 8.dp))
+                Text("${r.alerts} point(s) à examiner • ${r.inspectedApps} applications utilisateur contrôlées", color = Color.Gray, fontSize = 11.sp, modifier = Modifier.padding(vertical = 8.dp))
                 LazyColumn(Modifier.weight(1f)) {
                     items(r.findings) { finding ->
                         Card(Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { selected = finding }, colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(17.dp)) {
@@ -114,11 +127,14 @@ private fun scanDevice(context: Context): ScanResult {
     findings += Finding("Administrateurs de l’appareil", if (admins.isEmpty()) "Aucun administrateur tiers actif." else admins.joinToString(prefix = "Administrateurs : "), if (admins.isEmpty()) 0 else 3, settings(Settings.ACTION_SECURITY_SETTINGS))
     val root = listOf("/system/xbin/su", "/system/bin/su", "/sbin/su", "/data/adb/magisk").any { File(it).exists() } || android.os.Build.TAGS?.contains("test-keys") == true
     findings += Finding("Intégrité système", if (root) "Indices de root ou système modifié détectés." else "Aucun indice simple de root détecté.", if (root) 4 else 0)
+
+    findings += telephonyFinding(context)
     val pm = context.packageManager
     val apps = if (android.os.Build.VERSION.SDK_INT >= 33) pm.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(PackageManager.GET_META_DATA.toLong())) else @Suppress("DEPRECATION") pm.getInstalledApplications(PackageManager.GET_META_DATA)
     val risky = mutableListOf<String>(); val sideloaded = mutableListOf<String>()
     val sensitive = listOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA, Manifest.permission.READ_SMS, Manifest.permission.RECEIVE_SMS, Manifest.permission.READ_CALL_LOG, Manifest.permission.SYSTEM_ALERT_WINDOW)
-    apps.filter { it.packageName != context.packageName && it.flags and ApplicationInfo.FLAG_SYSTEM == 0 }.forEach { app ->
+    val userApps = apps.filter { it.packageName != context.packageName && it.flags and ApplicationInfo.FLAG_SYSTEM == 0 }
+    userApps.forEach { app ->
         val label = pm.getApplicationLabel(app).toString()
         val granted = sensitive.count { pm.checkPermission(it, app.packageName) == PackageManager.PERMISSION_GRANTED }
         if (granted >= 2) risky += "$label ($granted accès sensibles)"
@@ -132,7 +148,57 @@ private fun scanDevice(context: Context): ScanResult {
     val playProtect: () -> Unit = { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://play.google.com/store/apps/details?id=com.google.android.gms")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }; Unit }
     findings += Finding("Contrôle Play Protect", "Lancez aussi une analyse Play Protect : Sentinel ne remplace pas l’antivirus système.", 1, playProtect)
     val score: Int = findings.fold(0) { total, item -> total + when (item.severity) { 4 -> 28; 3 -> 16; 2 -> 8; else -> 0 } }.coerceAtMost(100)
-    return ScanResult(score, findings.sortedByDescending { it.severity }, apps.size)
+    val alerts = findings.count { it.severity >= 2 }
+    return ScanResult(score, findings.sortedByDescending { it.severity }, userApps.size, alerts)
+}
+
+private fun telephonyFinding(context: Context): Finding {
+    if (context.packageManager.hasSystemFeature(PackageManager.FEATURE_TELEPHONY).not())
+        return Finding("Surveillance réseau mobile", "Cet appareil ne possède pas de téléphonie mobile.", 0)
+    if (context.checkSelfPermission(Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED)
+        return Finding("Surveillance réseau mobile", "Autorisation Téléphone refusée : les changements SIM et radio ne peuvent pas être contrôlés.", 2, { context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:${context.packageName}"))) })
+
+    val tm = context.getSystemService(TelephonyManager::class.java)
+    val prefs = context.getSharedPreferences("sentinel_network_baseline", Context.MODE_PRIVATE)
+    val operator = runCatching { tm.networkOperator.orEmpty() }.getOrDefault("")
+    val operatorName = runCatching { tm.networkOperatorName.orEmpty() }.getOrDefault("")
+    val simOperator = runCatching { tm.simOperator.orEmpty() }.getOrDefault("")
+    val simName = runCatching { tm.simOperatorName.orEmpty() }.getOrDefault("")
+    val roaming = runCatching { tm.isNetworkRoaming }.getOrDefault(false)
+    val voice = runCatching { networkName(tm.voiceNetworkType) }.getOrDefault("inconnu")
+    val data = runCatching { networkName(tm.dataNetworkType) }.getOrDefault("inconnu")
+    val previousOperator = prefs.getString("operator", null)
+    val previousSim = prefs.getString("sim_operator", null)
+    val changes = mutableListOf<String>()
+    if (!previousOperator.isNullOrBlank() && operator.isNotBlank() && previousOperator != operator) changes += "opérateur réseau modifié ($previousOperator → $operator)"
+    if (!previousSim.isNullOrBlank() && simOperator.isNotBlank() && previousSim != simOperator) changes += "identité opérateur SIM modifiée"
+    if (roaming) changes += "itinérance active"
+    if (voice == "2G" || data == "2G") changes += "connexion 2G détectée (sécurité plus faible)"
+
+    val now = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
+    val oldLog = prefs.getString("events", "").orEmpty().lines().filter { it.isNotBlank() }
+    val newEvents = if (changes.isEmpty()) oldLog else (listOf("$now — ${changes.joinToString()}") + oldLog).take(8)
+    prefs.edit().putString("operator", operator).putString("sim_operator", simOperator).putString("events", newEvents.joinToString("\n")).apply()
+
+    val identity = "Réseau : ${operatorName.ifBlank { "inconnu" }} ${operator.ifBlank { "" }} • SIM : ${simName.ifBlank { "inconnue" }} • Voix $voice • Données $data"
+    val history = if (newEvents.isEmpty()) "Aucun changement mémorisé." else "Journal :\n${newEvents.joinToString("\n")}"
+    val detail = if (changes.isEmpty()) "$identity\n$history" else "$identity\nAnomalies actuelles : ${changes.joinToString()}.\n$history"
+    return Finding("Réseau mobile & SIM", detail, when { changes.size >= 2 -> 3; changes.isNotEmpty() -> 2; else -> 0 }, { context.startActivity(Intent(Settings.ACTION_NETWORK_OPERATOR_SETTINGS)) })
+}
+
+private fun networkName(type: Int): String = when (type) {
+    TelephonyManager.NETWORK_TYPE_GPRS, TelephonyManager.NETWORK_TYPE_EDGE,
+    TelephonyManager.NETWORK_TYPE_CDMA, TelephonyManager.NETWORK_TYPE_1xRTT,
+    TelephonyManager.NETWORK_TYPE_IDEN, TelephonyManager.NETWORK_TYPE_GSM -> "2G"
+    TelephonyManager.NETWORK_TYPE_UMTS, TelephonyManager.NETWORK_TYPE_EVDO_0,
+    TelephonyManager.NETWORK_TYPE_EVDO_A, TelephonyManager.NETWORK_TYPE_HSDPA,
+    TelephonyManager.NETWORK_TYPE_HSUPA, TelephonyManager.NETWORK_TYPE_HSPA,
+    TelephonyManager.NETWORK_TYPE_EVDO_B, TelephonyManager.NETWORK_TYPE_EHRPD,
+    TelephonyManager.NETWORK_TYPE_HSPAP, TelephonyManager.NETWORK_TYPE_TD_SCDMA -> "3G"
+    TelephonyManager.NETWORK_TYPE_LTE, TelephonyManager.NETWORK_TYPE_IWLAN -> "4G"
+    TelephonyManager.NETWORK_TYPE_NR -> "5G"
+    TelephonyManager.NETWORK_TYPE_UNKNOWN -> "inconnu"
+    else -> "type $type"
 }
 
 private fun severityColor(level: Int) = when { level >= 3 -> Color(0xFFFF626C); level == 2 -> Color(0xFFFFC44D); else -> Green }
