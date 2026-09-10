@@ -18,6 +18,7 @@ import java.util.UUID
 
 data class InternetContact(val id: String, val number: String, val nickname: String)
 data class InternetVoice(val id: String, val peer: String, val mine: Boolean, val mediaPath: String, val createdAt: String)
+data class SharedContact(val id: String, val number: String, val mine: Boolean)
 
 class InternetManager(private val context: Context) {
     val status = MutableStateFlow("Internet BNET non connecté")
@@ -25,6 +26,7 @@ class InternetManager(private val context: Context) {
     val connected = MutableStateFlow(false)
     val contacts = MutableStateFlow<List<InternetContact>>(emptyList())
     val voices = MutableStateFlow<List<InternetVoice>>(emptyList())
+    val sharedContacts = MutableStateFlow<List<SharedContact>>(emptyList())
     val displayName = MutableStateFlow("")
     val avatarUrl = MutableStateFlow("")
     private val client = OkHttpClient()
@@ -80,6 +82,7 @@ class InternetManager(private val context: Context) {
                 loadOwnProfile(token)
                 loadContacts()
                 loadVoices()
+                loadSharedContacts()
             }
         })
     }
@@ -128,6 +131,28 @@ class InternetManager(private val context: Context) {
     fun deleteContact(id: String) {
         val token = token() ?: return
         api("/rest/v1/contacts?id=eq.$id", token, "DELETE") { code, _ -> if (code in 200..299) loadContacts() }
+    }
+
+    fun shareContact(recipient: String, sharedNumber: String, done: (String) -> Unit) {
+        val token = token() ?: return done("Internet BNET non connecté")
+        if (recipient.isBlank()) return done("Sélectionne d’abord le destinataire")
+        if (recipient == sharedNumber) return done("Choisis un autre contact à partager")
+        val data = JSONObject().put("sender_id", currentUserId(token)).put("recipient_number", recipient)
+            .put("body", "Contact BNET : $sharedNumber").put("message_type", "contact").put("shared_contact_number", sharedNumber)
+        api("/rest/v1/internet_messages", token, "POST", data.toString()) { code, _ ->
+            if (code in 200..299) { loadSharedContacts(); done("Contact partagé avec $recipient") } else done("Partage refusé ($code)")
+        }
+    }
+
+    fun loadSharedContacts() {
+        val token = token() ?: return
+        val uid = currentUserId(token)
+        api("/rest/v1/internet_messages?message_type=eq.contact&select=id,sender_id,shared_contact_number&order=created_at.desc&limit=30", token) { code, body ->
+            if (code !in 200..299) return@api
+            sharedContacts.value = runCatching { val a = JSONArray(body); List(a.length()) { i -> a.getJSONObject(i).let { j ->
+                SharedContact(j.getString("id"), j.getString("shared_contact_number"), j.getString("sender_id") == uid)
+            } } }.getOrDefault(emptyList())
+        }
     }
 
     fun updateProfile(name: String, image: Uri?, done: (String) -> Unit) {
