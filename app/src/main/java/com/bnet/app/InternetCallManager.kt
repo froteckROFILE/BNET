@@ -51,9 +51,10 @@ class InternetCallManager(private val context: Context) {
         status.value = InternetCallStatus.RINGING
         createPeer()
         peer?.createOffer(object : SimpleSdpObserver() {
-            override fun onCreateSuccess(sdp: SessionDescription) {
-                peer?.setLocalDescription(SimpleSdpObserver(), sdp)
-                send("offer", JSONObject().put("sdp", sdp.description))
+            override fun onCreateSuccess(sdp: SessionDescription?) {
+                val actual = sdp ?: return
+                peer?.setLocalDescription(SimpleSdpObserver(), actual)
+                send("offer", JSONObject().put("sdp", actual.description))
             }
         }, MediaConstraints())
     }
@@ -66,9 +67,10 @@ class InternetCallManager(private val context: Context) {
             override fun onSetSuccess() {
                 pendingCandidates.forEach { peer?.addIceCandidate(it) }; pendingCandidates.clear()
                 peer?.createAnswer(object : SimpleSdpObserver() {
-                    override fun onCreateSuccess(sdp: SessionDescription) {
-                        peer?.setLocalDescription(SimpleSdpObserver(), sdp)
-                        send("answer", JSONObject().put("sdp", sdp.description))
+                    override fun onCreateSuccess(sdp: SessionDescription?) {
+                        val actual = sdp ?: return
+                        peer?.setLocalDescription(SimpleSdpObserver(), actual)
+                        send("answer", JSONObject().put("sdp", actual.description))
                     }
                 }, MediaConstraints())
             }
