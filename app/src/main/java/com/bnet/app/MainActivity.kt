@@ -1,322 +1,138 @@
 package com.bnet.app
 
 import android.Manifest
-import android.os.Build
+import android.app.admin.DevicePolicyManager
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.TrafficStats
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.delay
-import kotlin.math.cos
-import kotlin.math.sin
-import coil.compose.AsyncImage
+import androidx.core.app.NotificationManagerCompat
+import java.io.File
+import java.text.DecimalFormat
 
-private val Green = Color(0xFF39FF88)
-private val Dark = Color(0xFF030A07)
-private val Panel = Color(0xFF0C1B13)
+private val Green = Color(0xFF32FF88)
+private val Dark = Color(0xFF020805)
+private val Panel = Color(0xFF0B1911)
+
+data class Finding(val title: String, val detail: String, val severity: Int, val action: (() -> Unit)? = null)
+data class ScanResult(val score: Int, val findings: List<Finding>, val inspectedApps: Int)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val number = BnetNumber.getOrCreate(this)
-        val mesh = MeshManager(this, number)
-        val internet = InternetManager(this)
-        setContent { MaterialTheme(colorScheme = darkColorScheme(primary = Green, surface = Panel)) { BnetApp(number, mesh, internet) } }
+        setContent { MaterialTheme(colorScheme = darkColorScheme(primary = Green, surface = Panel)) { SentinelApp(this) } }
     }
 }
 
 @Composable
-private fun BnetApp(number: String, mesh: MeshManager, internet: InternetManager) {
-    var splash by remember { mutableStateOf(true) }
-    LaunchedEffect(Unit) { delay(3400); splash = false }
-    if (splash) BnetSplash() else BnetScreen(number, mesh, internet)
-}
-
-@Composable
-private fun BnetSplash() {
-    val transition = rememberInfiniteTransition(label = "portal")
-    val angle by transition.animateFloat(0f, 360f, infiniteRepeatable(tween(1800, easing = LinearEasing)), label = "rotation")
-    var shown by remember { mutableIntStateOf(0) }
-    val title = "BNET"
-    LaunchedEffect(Unit) { repeat(title.length) { delay(300); shown++ } }
-    Surface(Modifier.fillMaxSize(), color = Dark) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            Canvas(Modifier.size(180.dp)) {
-                val pad = 22.dp.toPx(); val diameter = size.minDimension - pad * 2
-                drawArc(Green.copy(alpha = .18f), angle, 305f, false, Offset(pad, pad), Size(diameter, diameter), style = Stroke(8.dp.toPx(), cap = StrokeCap.Round))
-                drawArc(Green, angle + 55f, 210f, false, Offset(pad + 15, pad + 15), Size(diameter - 30, diameter - 30), style = Stroke(4.dp.toPx(), cap = StrokeCap.Round))
-                val r = diameter / 2; val rad = Math.toRadians(angle.toDouble())
-                drawCircle(Green, 8.dp.toPx(), Offset(center.x + r * cos(rad).toFloat(), center.y + r * sin(rad).toFloat()))
-            }
-            Text(title.take(shown), fontSize = 48.sp, fontWeight = FontWeight.Black, letterSpacing = 9.sp, color = Color.White)
-            Spacer(Modifier.height(14.dp)); Text("AU SERVICE DES HUMAINS", color = Green, letterSpacing = 2.sp)
-            Spacer(Modifier.height(8.dp)); Text("BACK NETWORKING TECHNOLOGY", color = Color.White, letterSpacing = 2.sp, fontSize = 12.sp)
-            Spacer(Modifier.height(34.dp)); Text("développée par LABED ABDENOUR", color = Color.Gray, fontSize = 13.sp)
-        }
-    }
-}
-
-@Composable
-fun BnetScreen(myNumber: String, mesh: MeshManager, internet: InternetManager) {
-    var tab by remember { mutableIntStateOf(2) }
-    var message by remember { mutableStateOf("") }
-    val status by mesh.status.collectAsState(); val peers by mesh.peers.collectAsState(); val online by mesh.onlinePeers.collectAsState(); val callState by mesh.callState.collectAsState(); val remote by mesh.remoteNumber.collectAsState()
-    val internetNumber by internet.serverNumber.collectAsState()
-    val permissions = buildList {
-        add(Manifest.permission.RECORD_AUDIO)
-        if (Build.VERSION.SDK_INT >= 31) { add(Manifest.permission.BLUETOOTH_SCAN); add(Manifest.permission.BLUETOOTH_ADVERTISE); add(Manifest.permission.BLUETOOTH_CONNECT) }
-        if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.NEARBY_WIFI_DEVICES)
-        if (Build.VERSION.SDK_INT < 32) add(Manifest.permission.ACCESS_FINE_LOCATION)
-    }.toTypedArray()
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
-        if (grants.values.all { it }) mesh.start() else message = "Autorise les appareils à proximité et le microphone."
-    }
-    DisposableEffect(Unit) { onDispose { mesh.stop() } }
-    LaunchedEffect(Unit) { internet.connect() }
+private fun SentinelApp(context: Context) {
+    var result by remember { mutableStateOf<ScanResult?>(null) }
+    var scanning by remember { mutableStateOf(false) }
+    var selected by remember { mutableStateOf<Finding?>(null) }
+    LaunchedEffect(Unit) { scanning = true; result = scanDevice(context); scanning = false }
     Surface(Modifier.fillMaxSize(), color = Dark) {
         Column(Modifier.fillMaxSize().padding(16.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column { Text("BNET", fontSize = 27.sp, fontWeight = FontWeight.Black, color = Green); Text(myNumber, color = Color.White, fontSize = 13.sp) }
-                AssistChip(onClick = { launcher.launch(permissions) }, label = { Text(if (online.isEmpty()) "RADAR" else "${online.size} EN LIGNE") })
+                Column { Text("BNET SENTINEL", color = Green, fontSize = 25.sp, fontWeight = FontWeight.Black); Text("AUDIT LOCAL DE SÉCURITÉ", color = Color.Gray, fontSize = 11.sp, letterSpacing = 2.sp) }
+                Button(onClick = { scanning = true; result = scanDevice(context); scanning = false }) { Text("ANALYSER") }
             }
-            Text(status, color = Color.Gray, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
-            if (callState != CallState.IDLE) CallPanel(callState, remote, mesh)
-            else if (tab == 0) DialerScreen(online, mesh) { message = it }
-            else if (tab == 1) MessengerScreen(online, mesh) { message = it }
-            else InternetScreen(internet, internetNumber)
-            if (message.isNotBlank()) Text(message, color = Color(0xFFFF9B93), fontSize = 13.sp, modifier = Modifier.padding(6.dp))
-            Spacer(Modifier.weight(1f))
-            NavigationBar(containerColor = Panel) {
-                NavigationBarItem(selected = tab == 0, onClick = { tab = 0 }, icon = { Text("☎", fontSize = 22.sp) }, label = { Text("Appels") })
-                NavigationBarItem(selected = tab == 1, onClick = { tab = 1 }, icon = { Text("✉", fontSize = 22.sp) }, label = { Text("Messages") })
-                NavigationBarItem(selected = tab == 2, onClick = { tab = 2 }, icon = { Text("◉", fontSize = 22.sp) }, label = { Text("Internet") })
-            }
-        }
-    }
-}
-
-@Composable
-private fun InternetScreenLegacy(internet: InternetManager, number: String) {
-    val status by internet.status.collectAsState()
-    val connected by internet.connected.collectAsState()
-    val contacts by internet.contacts.collectAsState()
-    val voices by internet.voices.collectAsState()
-    val sharedContacts by internet.sharedContacts.collectAsState()
-    val savedName by internet.displayName.collectAsState()
-    val avatar by internet.avatarUrl.collectAsState()
-    var section by remember { mutableIntStateOf(0) }
-    var contactNumber by remember { mutableStateOf("") }
-    var nickname by remember { mutableStateOf("") }
-    var selected by remember { mutableStateOf("") }
-    var profileName by remember { mutableStateOf("") }
-    var notice by remember { mutableStateOf("") }
-    var recording by remember { mutableStateOf(false) }
-    var pickedAvatar by remember { mutableStateOf<android.net.Uri?>(null) }
-    val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> pickedAvatar = uri }
-    LaunchedEffect(savedName) { if (profileName.isBlank()) profileName = savedName }
-    LaunchedEffect(Unit) { while (true) { delay(5000); if (connected) { internet.loadContacts(); internet.loadVoices(); internet.loadSharedContacts() } } }
-    Column(
-        Modifier.fillMaxWidth().padding(top = 6.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column { Text(if (connected) "● INTERNET ACTIF" else "○ INTERNET", color = if (connected) Green else Color.Gray, fontWeight = FontWeight.Bold); Text(number.ifBlank { status }, fontSize = 13.sp) }
-            TextButton(onClick = internet::connect) { Text("Actualiser") }
-        }
-        TabRow(selectedTabIndex = section, containerColor = Panel) {
-            listOf("Répertoire", "Vocaux", "Profil").forEachIndexed { i, title -> Tab(selected = section == i, onClick = { section = i }, text = { Text(title, fontSize = 12.sp) }) }
-        }
-        Spacer(Modifier.height(10.dp))
-        when (section) {
-            0 -> {
-                Text("RÉPERTOIRE BNET PRIVÉ", color = Green, fontWeight = FontWeight.Bold)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(contactNumber, { contactNumber = it.take(16) }, label = { Text("Numéro BNET") }, modifier = Modifier.weight(1f), singleLine = true)
-                    Spacer(Modifier.width(6.dp)); Button(onClick = { internet.addContact(contactNumber, nickname) { notice = it } }) { Text("+") }
-                }
-                OutlinedTextField(nickname, { nickname = it.take(40) }, label = { Text("Nom du contact") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 250.dp)) {
-                    items(contacts, key = { it.id }) { contact ->
-                        Card(Modifier.fillMaxWidth().padding(top = 5.dp).clickable { selected = contact.number }, colors = CardDefaults.cardColors(containerColor = if (selected == contact.number) Color(0xFF16472E) else Panel)) {
-                            Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                Column { Text(contact.nickname.ifBlank { "Contact BNET" }, fontWeight = FontWeight.Bold); Text(contact.number, color = Color.LightGray, fontSize = 12.sp) }
-                                Row {
-                                    TextButton(onClick = { internet.shareContact(selected, contact.number) { notice = it } }) { Text("Partager", fontSize = 11.sp) }
-                                    TextButton(onClick = { internet.deleteContact(contact.id) }) { Text("Supprimer", color = Color(0xFFFF8A80), fontSize = 11.sp) }
-                                }
-                            }
-                        }
-                    }
-                }
-                Text("Touchez un contact pour le sélectionner avant un message vocal.", color = Color.Gray, fontSize = 11.sp)
-                if (sharedContacts.any { !it.mine }) {
-                    Text("CONTACTS REÇUS", color = Green, fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
-                    sharedContacts.filter { !it.mine }.take(4).forEach { shared ->
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Text(shared.number)
-                            TextButton(onClick = { internet.addContact(shared.number, "Contact partagé") { notice = it } }) { Text("Ajouter") }
-                        }
-                    }
-                }
-            }
-            1 -> {
-                Text("MESSAGES VOCAUX", color = Green, fontWeight = FontWeight.Bold)
-                Text(if (selected.isBlank()) "Sélectionne d’abord un contact dans Répertoire" else "Destinataire : $selected", color = Color.LightGray, fontSize = 12.sp)
-                Spacer(Modifier.height(8.dp))
-                Button(onClick = {
-                    if (!recording) { notice = internet.startVoice(); recording = notice.startsWith("Enregistrement") }
-                    else { internet.stopVoiceAndSend(selected) { notice = it }; recording = false }
-                }, enabled = selected.isNotBlank(), colors = ButtonDefaults.buttonColors(containerColor = if (recording) Color(0xFFB91C1C) else Green), modifier = Modifier.fillMaxWidth()) {
-                    Text(if (recording) "■ ARRÊTER ET ENVOYER" else "● ENREGISTRER UN VOCAL", color = Color.Black)
-                }
-                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 280.dp)) {
-                    items(voices, key = { it.id }) { voice ->
-                        Card(Modifier.fillMaxWidth().padding(top = 5.dp), colors = CardDefaults.cardColors(containerColor = if (voice.mine) Color(0xFF126B3D) else Color(0xFF17345A))) {
-                            Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                Column { Text(if (voice.mine) "Envoyé à ${voice.peer}" else "Message vocal reçu"); Text(voice.createdAt.take(16).replace('T', ' '), fontSize = 10.sp, color = Color.LightGray) }
-                                Button(onClick = { internet.playVoice(voice.mediaPath) { notice = it } }) { Text("▶") }
-                            }
-                        }
-                    }
-                }
-            }
-            else -> {
-                Text("MON PROFIL BNET", color = Green, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(8.dp))
-                AsyncImage(model = pickedAvatar ?: avatar, contentDescription = "Photo de profil", modifier = Modifier.size(120.dp), contentScale = ContentScale.Crop)
-                TextButton(onClick = { avatarPicker.launch("image/*") }) { Text("Changer la photo") }
-                OutlinedTextField(profileName, { profileName = it.take(60) }, label = { Text("Nom affiché") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                Spacer(Modifier.height(8.dp))
-                Button(onClick = { internet.updateProfile(profileName, pickedAvatar) { notice = it } }, modifier = Modifier.fillMaxWidth()) { Text("ENREGISTRER LE PROFIL") }
-                Text(number, color = Color.LightGray, modifier = Modifier.padding(top = 10.dp))
-            }
-        }
-        if (notice.isNotBlank()) Text(notice, color = if (notice.contains("refus") || notice.contains("Échec") || notice.contains("invalide")) Color(0xFFFF8A80) else Green, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp), textAlign = TextAlign.Center)
-    }
-}
-
-@Composable
-private fun DialerScreen(peers: Map<String, String>, mesh: MeshManager, report: (String) -> Unit) {
-    var dial by remember { mutableStateOf("") }
-    var showRecipients by remember { mutableStateOf(false) }
-    var transferTarget by remember { mutableStateOf("") }
-    val transfers by mesh.transfers.collectAsState()
-    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        if (uris.isNotEmpty()) {
-            val count = mesh.sendAttachments(transferTarget, uris)
-            report(if (count > 0) "$count fichier(s) ajouté(s) à la file d’envoi." else "Aucun fichier envoyé.")
-        }
-    }
-    Text("Téléphones à portée", fontWeight = FontWeight.Bold)
-    LazyColumn(Modifier.fillMaxWidth().heightIn(max = 130.dp)) {
-        items(peers.entries.toList(), key = { it.key }) { peer ->
-            PeerCard(peer.value, "APPELER") { if (!mesh.callEndpoint(peer.key)) report("Connexion en préparation, réessaie dans 2 secondes.") }
-        }
-    }
-    OutlinedTextField(dial, { dial = it.take(16) }, label = { Text("Numéro BNET") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), shape = RoundedCornerShape(18.dp))
-    val keys = listOf("1","2","3","4","5","6","7","8","9","+","0","⌫")
-    keys.chunked(3).forEach { row -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) { row.forEach { key -> TextButton(onClick = { if (key == "⌫") dial = dial.dropLast(1) else if (dial.length < 16) dial += key }, modifier = Modifier.size(86.dp, 48.dp)) { Text(key, fontSize = 22.sp) } } } }
-    Button(onClick = { if (!mesh.callNumber(dial)) report("Numéro absent du radar.") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) { Text("APPELER SUR BNET") }
-    FilledTonalButton(onClick = { if (peers.isEmpty()) report("Aucun destinataire connecté.") else showRecipients = true }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) { Text("ENVOYER PHOTOS • VIDÉOS • AUDIO • FICHIERS") }
-    LazyColumn(Modifier.fillMaxWidth().heightIn(max = 105.dp)) {
-        items(transfers.takeLast(4).reversed(), key = { "${it.id}-${it.mine}" }) { transfer ->
-            Column(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(transfer.name, maxLines = 1, fontSize = 11.sp); Text("${transfer.progress}%", color = Green, fontSize = 11.sp) }
-                LinearProgressIndicator(progress = { transfer.progress / 100f }, modifier = Modifier.fillMaxWidth())
-            }
-        }
-    }
-    if (showRecipients) AlertDialog(
-        onDismissRequest = { showRecipients = false },
-        title = { Text("Choisir le destinataire") },
-        text = { Column { peers.forEach { (id, number) -> TextButton(onClick = { transferTarget = id; showRecipients = false; filePicker.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) { Text(number) } } } },
-        confirmButton = { TextButton(onClick = { showRecipients = false }) { Text("Annuler") } }
-    )
-}
-
-@Composable
-private fun MessengerScreen(peers: Map<String, String>, mesh: MeshManager, report: (String) -> Unit) {
-    val messages by mesh.messages.collectAsState(); var selected by remember { mutableStateOf("") }; var draft by remember { mutableStateOf("") }
-    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
-        if (uris.isNotEmpty()) {
-            if (selected.isBlank()) report("Choisis d’abord un numéro.")
+            Spacer(Modifier.height(14.dp))
+            if (scanning || result == null) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(); Text("Analyse…", modifier = Modifier.padding(top = 90.dp)) }
             else {
-                val count = mesh.sendAttachments(selected, uris, true)
-                if (count == 0) report("Photos non envoyées.") else report("$count photo(s) en cours d’envoi.")
-            }
-        }
-    }
-    val listState = rememberLazyListState()
-    LaunchedEffect(messages.size) { if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex) }
-    Text("Messagerie locale", fontWeight = FontWeight.Bold)
-    if (peers.isEmpty()) Text("Active le radar pour trouver un contact.", color = Color.Gray, modifier = Modifier.padding(16.dp))
-    LazyColumn(Modifier.fillMaxWidth().heightIn(max = 105.dp)) { items(peers.entries.toList(), key = { it.key }) { peer -> PeerCard(peer.value, if (selected == peer.key) "CHOISI" else "ÉCRIRE") { selected = peer.key } } }
-    HorizontalDivider(Modifier.padding(vertical = 8.dp), color = Color.DarkGray)
-    LazyColumn(Modifier.fillMaxWidth().height(190.dp), state = listState) {
-        items(messages) { item ->
-            Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), horizontalArrangement = if (item.mine) Arrangement.End else Arrangement.Start) {
-                Card(colors = CardDefaults.cardColors(containerColor = if (item.mine) Color(0xFF126B3D) else Color(0xFF17345A))) {
-                    Column(Modifier.padding(10.dp).widthIn(max = 245.dp)) {
-                        Text(if (item.mine) "Envoyé à ${item.peer}" else "Reçu de ${item.peer}", color = Color.LightGray, fontSize = 10.sp)
-                        if (item.imageSource != null) AsyncImage(model = item.imageSource, contentDescription = "Photo BNET", modifier = Modifier.fillMaxWidth().heightIn(min = 90.dp, max = 230.dp).padding(top = 5.dp), contentScale = ContentScale.Crop)
-                        if (item.text.isNotBlank()) Text(item.text, modifier = Modifier.padding(top = 3.dp))
+                val r = result!!
+                RiskGauge(r.score)
+                Text("${r.inspectedApps} applications contrôlées • analyse exécutée uniquement sur ce téléphone", color = Color.Gray, fontSize = 11.sp, modifier = Modifier.padding(vertical = 8.dp))
+                LazyColumn(Modifier.weight(1f)) {
+                    items(r.findings) { finding ->
+                        Card(Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { selected = finding }, colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(17.dp)) {
+                            Row(Modifier.fillMaxWidth().padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Surface(shape = RoundedCornerShape(50), color = severityColor(finding.severity).copy(alpha = .18f), modifier = Modifier.size(38.dp)) { Box(contentAlignment = Alignment.Center) { Text(if (finding.severity >= 3) "!" else if (finding.severity == 2) "?" else "✓", color = severityColor(finding.severity), fontWeight = FontWeight.Black) } }
+                                Spacer(Modifier.width(11.dp)); Column(Modifier.weight(1f)) { Text(finding.title, fontWeight = FontWeight.Bold); Text(finding.detail, color = Color.LightGray, fontSize = 11.sp, maxLines = 2) }
+                            }
+                        }
                     }
                 }
+                Text("Limite : une interception opérateur/SS7 ou un implant très avancé ne peut pas être confirmé par une application ordinaire.", color = Color(0xFFFFC86A), fontSize = 11.sp, textAlign = TextAlign.Center)
             }
         }
     }
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        OutlinedTextField(draft, { draft = it.take(500) }, label = { Text("Message") }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp))
-        Spacer(Modifier.width(6.dp)); FilledTonalButton(onClick = { if (selected.isBlank()) report("Choisis d’abord un numéro.") else photoPicker.launch("image/*") }) { Text("📷") }
-        Spacer(Modifier.width(6.dp)); Button(onClick = { if (selected.isBlank()) report("Choisis d’abord un numéro.") else if (mesh.sendMessage(selected, draft)) draft = "" else report("Message non envoyé.") }) { Text("➤") }
-    }
+    selected?.let { finding -> AlertDialog(onDismissRequest = { selected = null }, title = { Text(finding.title) }, text = { Text(finding.detail) }, confirmButton = { if (finding.action != null) Button(onClick = { finding.action.invoke(); selected = null }) { Text("OUVRIR LE RÉGLAGE") } else TextButton(onClick = { selected = null }) { Text("Fermer") } }) }
 }
 
 @Composable
-private fun PeerCard(number: String, action: String, onClick: () -> Unit) {
-    Card(Modifier.fillMaxWidth().padding(vertical = 3.dp).clickable(onClick = onClick), colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(15.dp)) {
-        Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) { Text(number); Text(action, color = Green, fontWeight = FontWeight.Bold, fontSize = 12.sp) }
-    }
-}
-
-@Composable
-private fun CallPanel(state: CallState, remote: String, mesh: MeshManager) {
-    var seconds by remember { mutableIntStateOf(0) }
-    LaunchedEffect(state) { seconds = 0; if (state == CallState.ACTIVE) while (true) { delay(1000); seconds++ } }
-    val time = "%02d:%02d".format(seconds / 60, seconds % 60)
-    Card(Modifier.fillMaxWidth().padding(vertical = 28.dp), colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(28.dp)) {
-        Column(Modifier.fillMaxWidth().padding(30.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(when (state) { CallState.INCOMING -> "APPEL BNET ENTRANT"; CallState.OUTGOING -> "SONNERIE…"; CallState.ACTIVE -> "INTERPHONE ACTIF"; else -> "" }, color = Green, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(18.dp)); Text(remote, fontSize = 23.sp, textAlign = TextAlign.Center)
-            Spacer(Modifier.height(10.dp)); Text(if (state == CallState.ACTIVE) time else "— —", fontSize = 30.sp, color = Color.White)
-            Spacer(Modifier.height(28.dp))
-            if (state == CallState.INCOMING) Row {
-                Button(onClick = mesh::acceptCall) { Text("Décrocher") }; Spacer(Modifier.width(12.dp))
-                Button(onClick = mesh::declineCall, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB91C1C))) { Text("Refuser") }
-            } else Button(onClick = mesh::hangUp, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB91C1C))) { Text("Raccrocher") }
+private fun RiskGauge(score: Int) {
+    val label = when { score >= 65 -> "RISQUE ÉLEVÉ"; score >= 30 -> "À VÉRIFIER"; else -> "RISQUE FAIBLE" }
+    val color = when { score >= 65 -> Color(0xFFFF5A64); score >= 30 -> Color(0xFFFFC44D); else -> Green }
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(25.dp)) {
+        Row(Modifier.fillMaxWidth().padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(112.dp), contentAlignment = Alignment.Center) { Canvas(Modifier.fillMaxSize()) { drawCircle(Color.DarkGray, style = Stroke(10.dp.toPx())); drawArc(color, -90f, 360f * score / 100f, false, style = Stroke(10.dp.toPx())) }; Text("$score", fontSize = 31.sp, fontWeight = FontWeight.Black, color = color) }
+            Spacer(Modifier.width(20.dp)); Column { Text(label, color = color, fontWeight = FontWeight.Black, fontSize = 18.sp); Text("Indice d’exposition, pas preuve d’espionnage", color = Color.LightGray, fontSize = 12.sp) }
         }
     }
 }
+
+private fun scanDevice(context: Context): ScanResult {
+    val findings = mutableListOf<Finding>()
+    fun settings(action: String) = { runCatching { context.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }
+    val cm = context.getSystemService(ConnectivityManager::class.java)
+    val caps = cm.getNetworkCapabilities(cm.activeNetwork)
+    val vpn = caps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+    findings += Finding("VPN", if (vpn) "Un tunnel VPN est actif. Vérifiez que vous reconnaissez son application." else "Aucun tunnel VPN actif détecté.", if (vpn) 2 else 0, settings(Settings.ACTION_VPN_SETTINGS))
+    val proxy = System.getProperty("http.proxyHost").orEmpty()
+    findings += Finding("Proxy réseau", if (proxy.isBlank()) "Aucun proxy système déclaré." else "Proxy actif : $proxy", if (proxy.isBlank()) 0 else 3, settings(Settings.ACTION_WIFI_SETTINGS))
+    val adb = Settings.Global.getInt(context.contentResolver, Settings.Global.ADB_ENABLED, 0) == 1
+    findings += Finding("Débogage USB", if (adb) "ADB est activé : désactivez-le hors utilisation." else "Débogage USB désactivé.", if (adb) 2 else 0, settings(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
+    val accessibility = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty()
+    findings += Finding("Services d’accessibilité", if (accessibility.isBlank()) "Aucun service tiers activé." else "Services activés : ${accessibility.replace(':', '\n')}", if (accessibility.isBlank()) 0 else 3, settings(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+    val listeners = NotificationManagerCompat.getEnabledListenerPackages(context) - context.packageName
+    findings += Finding("Accès aux notifications", if (listeners.isEmpty()) "Aucune application tierce ne lit les notifications." else listeners.joinToString(prefix = "Applications autorisées : "), if (listeners.isEmpty()) 0 else 2, settings("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
+    val dpm = context.getSystemService(DevicePolicyManager::class.java)
+    val admins = dpm.activeAdmins.orEmpty().map { it.packageName }.filter { it != context.packageName }
+    findings += Finding("Administrateurs de l’appareil", if (admins.isEmpty()) "Aucun administrateur tiers actif." else admins.joinToString(prefix = "Administrateurs : "), if (admins.isEmpty()) 0 else 3, settings(Settings.ACTION_SECURITY_SETTINGS))
+    val root = listOf("/system/xbin/su", "/system/bin/su", "/sbin/su", "/data/adb/magisk").any { File(it).exists() } || android.os.Build.TAGS?.contains("test-keys") == true
+    findings += Finding("Intégrité système", if (root) "Indices de root ou système modifié détectés." else "Aucun indice simple de root détecté.", if (root) 4 else 0)
+    val pm = context.packageManager
+    val apps = if (android.os.Build.VERSION.SDK_INT >= 33) pm.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(PackageManager.GET_META_DATA.toLong())) else @Suppress("DEPRECATION") pm.getInstalledApplications(PackageManager.GET_META_DATA)
+    val risky = mutableListOf<String>(); val sideloaded = mutableListOf<String>()
+    val sensitive = listOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA, Manifest.permission.READ_SMS, Manifest.permission.RECEIVE_SMS, Manifest.permission.READ_CALL_LOG, Manifest.permission.SYSTEM_ALERT_WINDOW)
+    apps.filter { it.packageName != context.packageName && it.flags and ApplicationInfo.FLAG_SYSTEM == 0 }.forEach { app ->
+        val label = pm.getApplicationLabel(app).toString()
+        val granted = sensitive.count { pm.checkPermission(it, app.packageName) == PackageManager.PERMISSION_GRANTED }
+        if (granted >= 2) risky += "$label ($granted accès sensibles)"
+        val source = runCatching { if (android.os.Build.VERSION.SDK_INT >= 30) pm.getInstallSourceInfo(app.packageName).installingPackageName else @Suppress("DEPRECATION") pm.getInstallerPackageName(app.packageName) }.getOrNull()
+        if (source.isNullOrBlank()) sideloaded += label
+    }
+    findings += Finding("Applications très autorisées", if (risky.isEmpty()) "Aucune combinaison inhabituelle détectée." else risky.take(12).joinToString(), if (risky.isEmpty()) 0 else 3, settings(Settings.ACTION_PRIVACY_SETTINGS))
+    findings += Finding("Installations hors boutique", if (sideloaded.isEmpty()) "Aucune installation sans source reconnue." else sideloaded.take(15).joinToString(), if (sideloaded.isEmpty()) 0 else 2, settings(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES))
+    val rx = formatBytes(TrafficStats.getTotalRxBytes()); val tx = formatBytes(TrafficStats.getTotalTxBytes())
+    findings += Finding("Transferts réseau depuis le démarrage", "Reçu : $rx • Envoyé : $tx. Un volume élevé seul ne prouve pas une fuite.", 1, settings(Settings.ACTION_DATA_USAGE_SETTINGS))
+    findings += Finding("Contrôle Play Protect", "Lancez aussi une analyse Play Protect : Sentinel ne remplace pas l’antivirus système.", 1) { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://play.google.com/store/apps/details?id=com.google.android.gms")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }
+    val score = findings.sumOf { when (it.severity) { 4 -> 28; 3 -> 16; 2 -> 8; else -> 0 } }.coerceAtMost(100)
+    return ScanResult(score, findings.sortedByDescending { it.severity }, apps.size)
+}
+
+private fun severityColor(level: Int) = when { level >= 3 -> Color(0xFFFF626C); level == 2 -> Color(0xFFFFC44D); else -> Green }
+private fun formatBytes(value: Long): String { if (value < 0) return "indisponible"; val units = arrayOf("o", "Ko", "Mo", "Go"); var v = value.toDouble(); var i = 0; while (v >= 1024 && i < units.lastIndex) { v /= 1024; i++ }; return "${DecimalFormat("0.0").format(v)} ${units[i]}" }
