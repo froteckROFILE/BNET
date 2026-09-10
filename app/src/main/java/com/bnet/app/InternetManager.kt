@@ -22,6 +22,7 @@ data class SharedContact(val id: String, val number: String, val mine: Boolean)
 data class InternetText(val id: String, val peer: String, val mine: Boolean, val body: String, val createdAt: String)
 
 class InternetManager(private val context: Context) {
+    val callManager = InternetCallManager(context)
     val status = MutableStateFlow("Internet BNET non connecté")
     val serverNumber = MutableStateFlow("")
     val connected = MutableStateFlow(false)
@@ -80,6 +81,7 @@ class InternetManager(private val context: Context) {
                 }
                 if (number.isBlank()) { status.value = "Profil BNET absent — vérifie le schéma SQL"; return }
                 serverNumber.value = number; connected.value = true; status.value = "Internet BNET connecté"
+                callManager.start(number)
                 markOnline(token)
                 loadOwnProfile(token)
                 loadContacts()
