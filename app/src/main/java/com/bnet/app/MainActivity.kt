@@ -34,9 +34,9 @@ import kotlin.math.cos
 import kotlin.math.sin
 import coil.compose.AsyncImage
 
-private val Green = Color(0xFF39FF88)
-private val Dark = Color(0xFF030A07)
-private val Panel = Color(0xFF0C1B13)
+private val BrandRed = Color(0xFFE62B3A)
+private val Dark = Color(0xFFFFFBFC)
+private val Panel = Color(0xFFF4F6F8)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -44,7 +44,7 @@ class MainActivity : ComponentActivity() {
         val number = BnetNumber.getOrCreate(this)
         val mesh = MeshManager(this, number)
         val internet = InternetManager(this)
-        setContent { MaterialTheme(colorScheme = darkColorScheme(primary = Green, surface = Panel)) { BnetApp(number, mesh, internet) } }
+        setContent { MaterialTheme(colorScheme = lightColorScheme(primary = BrandRed, secondary = Color(0xFFFF6B78), background = Dark, surface = Panel, onSurface = Color(0xFF161A1D))) { BnetApp(number, mesh, internet) } }
     }
 }
 
@@ -66,14 +66,14 @@ private fun BnetSplash() {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Canvas(Modifier.size(180.dp)) {
                 val pad = 22.dp.toPx(); val diameter = size.minDimension - pad * 2
-                drawArc(Green.copy(alpha = .18f), angle, 305f, false, Offset(pad, pad), Size(diameter, diameter), style = Stroke(8.dp.toPx(), cap = StrokeCap.Round))
-                drawArc(Green, angle + 55f, 210f, false, Offset(pad + 15, pad + 15), Size(diameter - 30, diameter - 30), style = Stroke(4.dp.toPx(), cap = StrokeCap.Round))
+                drawArc(BrandRed.copy(alpha = .16f), angle, 305f, false, Offset(pad, pad), Size(diameter, diameter), style = Stroke(8.dp.toPx(), cap = StrokeCap.Round))
+                drawArc(BrandRed, angle + 55f, 210f, false, Offset(pad + 15, pad + 15), Size(diameter - 30, diameter - 30), style = Stroke(4.dp.toPx(), cap = StrokeCap.Round))
                 val r = diameter / 2; val rad = Math.toRadians(angle.toDouble())
-                drawCircle(Green, 8.dp.toPx(), Offset(center.x + r * cos(rad).toFloat(), center.y + r * sin(rad).toFloat()))
+                drawCircle(BrandRed, 8.dp.toPx(), Offset(center.x + r * cos(rad).toFloat(), center.y + r * sin(rad).toFloat()))
             }
-            Text(title.take(shown), fontSize = 48.sp, fontWeight = FontWeight.Black, letterSpacing = 9.sp, color = Color.White)
-            Spacer(Modifier.height(14.dp)); Text("AU SERVICE DES HUMAINS", color = Green, letterSpacing = 2.sp)
-            Spacer(Modifier.height(8.dp)); Text("BACK NETWORKING TECHNOLOGY", color = Color.White, letterSpacing = 2.sp, fontSize = 12.sp)
+            Text(title.take(shown), fontSize = 48.sp, fontWeight = FontWeight.Black, letterSpacing = 9.sp, color = BrandRed)
+            Spacer(Modifier.height(14.dp)); Text("AU SERVICE DES HUMAINS", color = BrandRed, letterSpacing = 2.sp)
+            Spacer(Modifier.height(8.dp)); Text("BACK NETWORKING TECHNOLOGY", color = Color(0xFF30363B), letterSpacing = 2.sp, fontSize = 12.sp)
             Spacer(Modifier.height(34.dp)); Text("développée par LABED ABDENOUR", color = Color.Gray, fontSize = 13.sp)
         }
     }
@@ -96,23 +96,23 @@ fun BnetScreen(myNumber: String, mesh: MeshManager, internet: InternetManager) {
     }
     DisposableEffect(Unit) { onDispose { mesh.stop() } }
     LaunchedEffect(Unit) { internet.connect() }
-    Surface(Modifier.fillMaxSize(), color = Dark) {
+        Surface(Modifier.fillMaxSize(), color = Dark) {
         Column(Modifier.fillMaxSize().padding(16.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column { Text("BNET", fontSize = 27.sp, fontWeight = FontWeight.Black, color = Green); Text(myNumber, color = Color.White, fontSize = 13.sp) }
+                Column { Text("BNET", fontSize = 27.sp, fontWeight = FontWeight.Black, color = BrandRed); Text(myNumber, color = Color(0xFF444A50), fontSize = 13.sp) }
                 AssistChip(onClick = { launcher.launch(permissions) }, label = { Text(if (online.isEmpty()) "RADAR" else "${online.size} EN LIGNE") })
             }
-            Text(status, color = Color.Gray, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
+            Text(status, color = Color(0xFF69727A), fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
             if (callState != CallState.IDLE) CallPanel(callState, remote, mesh)
             else if (tab == 0) DialerScreen(online, mesh) { message = it }
             else if (tab == 1) MessengerScreen(online, mesh) { message = it }
             else InternetScreen(internet, internetNumber)
             if (message.isNotBlank()) Text(message, color = Color(0xFFFF9B93), fontSize = 13.sp, modifier = Modifier.padding(6.dp))
             Spacer(Modifier.weight(1f))
-            NavigationBar(containerColor = Panel) {
-                NavigationBarItem(selected = tab == 0, onClick = { tab = 0 }, icon = { Text("☎", fontSize = 22.sp) }, label = { Text("Appels") })
+            NavigationBar(containerColor = Color.White) {
+                NavigationBarItem(selected = tab == 0, onClick = { tab = 0 }, icon = { Text("⌁", fontSize = 22.sp) }, label = { Text("Radar local") })
                 NavigationBarItem(selected = tab == 1, onClick = { tab = 1 }, icon = { Text("✉", fontSize = 22.sp) }, label = { Text("Messages") })
-                NavigationBarItem(selected = tab == 2, onClick = { tab = 2 }, icon = { Text("◉", fontSize = 22.sp) }, label = { Text("Internet") })
+                NavigationBarItem(selected = tab == 2, onClick = { tab = 2 }, icon = { Text("☎", fontSize = 22.sp) }, label = { Text("Appels réseau") })
             }
         }
     }
@@ -143,7 +143,7 @@ private fun InternetScreenLegacy(internet: InternetManager, number: String) {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column { Text(if (connected) "● INTERNET ACTIF" else "○ INTERNET", color = if (connected) Green else Color.Gray, fontWeight = FontWeight.Bold); Text(number.ifBlank { status }, fontSize = 13.sp) }
+            Column { Text(if (connected) "● INTERNET ACTIF" else "○ INTERNET", color = if (connected) BrandRed else Color.Gray, fontWeight = FontWeight.Bold); Text(number.ifBlank { status }, fontSize = 13.sp) }
             TextButton(onClick = internet::connect) { Text("Actualiser") }
         }
         TabRow(selectedTabIndex = section, containerColor = Panel) {
@@ -152,7 +152,7 @@ private fun InternetScreenLegacy(internet: InternetManager, number: String) {
         Spacer(Modifier.height(10.dp))
         when (section) {
             0 -> {
-                Text("RÉPERTOIRE BNET PRIVÉ", color = Green, fontWeight = FontWeight.Bold)
+                Text("RÉPERTOIRE BNET PRIVÉ", color = BrandRed, fontWeight = FontWeight.Bold)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(contactNumber, { contactNumber = it.take(16) }, label = { Text("Numéro BNET") }, modifier = Modifier.weight(1f), singleLine = true)
                     Spacer(Modifier.width(6.dp)); Button(onClick = { internet.addContact(contactNumber, nickname) { notice = it } }) { Text("+") }
@@ -173,7 +173,7 @@ private fun InternetScreenLegacy(internet: InternetManager, number: String) {
                 }
                 Text("Touchez un contact pour le sélectionner avant un message vocal.", color = Color.Gray, fontSize = 11.sp)
                 if (sharedContacts.any { !it.mine }) {
-                    Text("CONTACTS REÇUS", color = Green, fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+                    Text("CONTACTS REÇUS", color = BrandRed, fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
                     sharedContacts.filter { !it.mine }.take(4).forEach { shared ->
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Text(shared.number)
@@ -183,13 +183,13 @@ private fun InternetScreenLegacy(internet: InternetManager, number: String) {
                 }
             }
             1 -> {
-                Text("MESSAGES VOCAUX", color = Green, fontWeight = FontWeight.Bold)
+                Text("MESSAGES VOCAUX", color = BrandRed, fontWeight = FontWeight.Bold)
                 Text(if (selected.isBlank()) "Sélectionne d’abord un contact dans Répertoire" else "Destinataire : $selected", color = Color.LightGray, fontSize = 12.sp)
                 Spacer(Modifier.height(8.dp))
                 Button(onClick = {
                     if (!recording) { notice = internet.startVoice(); recording = notice.startsWith("Enregistrement") }
                     else { internet.stopVoiceAndSend(selected) { notice = it }; recording = false }
-                }, enabled = selected.isNotBlank(), colors = ButtonDefaults.buttonColors(containerColor = if (recording) Color(0xFFB91C1C) else Green), modifier = Modifier.fillMaxWidth()) {
+                }, enabled = selected.isNotBlank(), colors = ButtonDefaults.buttonColors(containerColor = if (recording) Color(0xFFB91C1C) else BrandRed), modifier = Modifier.fillMaxWidth()) {
                     Text(if (recording) "■ ARRÊTER ET ENVOYER" else "● ENREGISTRER UN VOCAL", color = Color.Black)
                 }
                 LazyColumn(Modifier.fillMaxWidth().heightIn(max = 280.dp)) {
@@ -204,7 +204,7 @@ private fun InternetScreenLegacy(internet: InternetManager, number: String) {
                 }
             }
             else -> {
-                Text("MON PROFIL BNET", color = Green, fontWeight = FontWeight.Bold)
+                Text("MON PROFIL BNET", color = BrandRed, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
                 AsyncImage(model = pickedAvatar ?: avatar, contentDescription = "Photo de profil", modifier = Modifier.size(120.dp), contentScale = ContentScale.Crop)
                 TextButton(onClick = { avatarPicker.launch("image/*") }) { Text("Changer la photo") }
@@ -214,7 +214,7 @@ private fun InternetScreenLegacy(internet: InternetManager, number: String) {
                 Text(number, color = Color.LightGray, modifier = Modifier.padding(top = 10.dp))
             }
         }
-        if (notice.isNotBlank()) Text(notice, color = if (notice.contains("refus") || notice.contains("Échec") || notice.contains("invalide")) Color(0xFFFF8A80) else Green, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp), textAlign = TextAlign.Center)
+        if (notice.isNotBlank()) Text(notice, color = if (notice.contains("refus") || notice.contains("Échec") || notice.contains("invalide")) Color(0xFFFF5252) else BrandRed, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp), textAlign = TextAlign.Center)
     }
 }
 
@@ -244,7 +244,7 @@ private fun DialerScreen(peers: Map<String, String>, mesh: MeshManager, report: 
     LazyColumn(Modifier.fillMaxWidth().heightIn(max = 105.dp)) {
         items(transfers.takeLast(4).reversed(), key = { "${it.id}-${it.mine}" }) { transfer ->
             Column(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(transfer.name, maxLines = 1, fontSize = 11.sp); Text("${transfer.progress}%", color = Green, fontSize = 11.sp) }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(transfer.name, maxLines = 1, fontSize = 11.sp); Text("${transfer.progress}%", color = BrandRed, fontSize = 11.sp) }
                 LinearProgressIndicator(progress = { transfer.progress / 100f }, modifier = Modifier.fillMaxWidth())
             }
         }
@@ -298,7 +298,7 @@ private fun MessengerScreen(peers: Map<String, String>, mesh: MeshManager, repor
 @Composable
 private fun PeerCard(number: String, action: String, onClick: () -> Unit) {
     Card(Modifier.fillMaxWidth().padding(vertical = 3.dp).clickable(onClick = onClick), colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(15.dp)) {
-        Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) { Text(number); Text(action, color = Green, fontWeight = FontWeight.Bold, fontSize = 12.sp) }
+        Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) { Text(number); Text(action, color = BrandRed, fontWeight = FontWeight.Bold, fontSize = 12.sp) }
     }
 }
 
@@ -309,7 +309,7 @@ private fun CallPanel(state: CallState, remote: String, mesh: MeshManager) {
     val time = "%02d:%02d".format(seconds / 60, seconds % 60)
     Card(Modifier.fillMaxWidth().padding(vertical = 28.dp), colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(28.dp)) {
         Column(Modifier.fillMaxWidth().padding(30.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(when (state) { CallState.INCOMING -> "APPEL BNET ENTRANT"; CallState.OUTGOING -> "SONNERIE…"; CallState.ACTIVE -> "INTERPHONE ACTIF"; else -> "" }, color = Green, fontWeight = FontWeight.Bold)
+            Text(when (state) { CallState.INCOMING -> "APPEL BNET ENTRANT"; CallState.OUTGOING -> "SONNERIE…"; CallState.ACTIVE -> "INTERPHONE ACTIF"; else -> "" }, color = BrandRed, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(18.dp)); Text(remote, fontSize = 23.sp, textAlign = TextAlign.Center)
             Spacer(Modifier.height(10.dp)); Text(if (state == CallState.ACTIVE) time else "— —", fontSize = 30.sp, color = Color.White)
             Spacer(Modifier.height(28.dp))
