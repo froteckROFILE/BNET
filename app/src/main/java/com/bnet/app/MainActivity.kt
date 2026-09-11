@@ -250,10 +250,18 @@ private fun loadSignature(context: Context): String {
     val files = context.filesDir.listFiles()?.filter { it.name.startsWith("enroll-") }.orEmpty().takeLast(8)
     if (files.isEmpty()) return ""
     val vectors = files.map { vector(it) }
-    return vectors.first().indices.joinToString(",") { i -> "%.4f".format(Locale.US, vectors.map { it[i] }.average()) }
+    val values = ArrayList<String>(64)
+    for (index in 0 until 64) {
+        var total = 0.0
+        for (sample in vectors) total += sample.getOrElse(index) { 0.0 }
+        values += "%.4f".format(Locale.US, total / vectors.size.toDouble())
+    }
+    return values.joinToString(",")
 }
 
-private fun signature(file: File): String = vector(file).joinToString(",") { "%.4f".format(Locale.US, it) }
+private fun signature(file: File): String {
+    return vector(file).joinToString(",") { value -> "%.4f".format(Locale.US, value) }
+}
 private fun vector(file: File): List<Double> {
     val bitmap = BitmapFactory.decodeFile(file.absolutePath) ?: return List(64) { 0.0 }
     val out = mutableListOf<Double>()
@@ -263,13 +271,22 @@ private fun vector(file: File): List<Double> {
     }
     bitmap.recycle(); return out
 }
-private fun compare(a: String, b: String): Double { val x = a.split(',').mapNotNull { it.toDoubleOrNull() }; val y = b.split(',').mapNotNull { it.toDoubleOrNull() }; if (x.size != y.size || x.isEmpty()) return 1.0; return x.zip(y).map { abs(it.first - it.second) }.average() }
+private fun compare(a: String, b: String): Double {
+    val left = a.split(',').mapNotNull { token -> token.toDoubleOrNull() }
+    val right = b.split(',').mapNotNull { token -> token.toDoubleOrNull() }
+    if (left.size != right.size || left.isEmpty()) return 1.0
+    var total = 0.0
+    for (index in left.indices) total += abs(left[index] - right[index])
+    return total / left.size.toDouble()
+}
 private fun loadEvidence(context: Context): List<Evidence> = context.filesDir.listFiles()?.filter { it.name.startsWith("evidence-") }?.sortedByDescending { it.lastModified() }?.map { Evidence(it.absolutePath, SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault()).format(Date(it.lastModified())), "Conservé localement • envoi en attente") }.orEmpty()
 
 private fun speakAlarm(context: Context) {
-    val speech = TextToSpeech(context) { if (it == TextToSpeech.SUCCESS) ttsReady(context)?.speak("Don't touch the phone. Three, two, one, alarm.", TextToSpeech.QUEUE_FLUSH, null, "bnet-alarm") }
+    val speech = tts ?: TextToSpeech(context) { result ->
+        if (result == TextToSpeech.SUCCESS) tts?.speak("Don't touch the phone. Three, two, one, alarm.", TextToSpeech.QUEUE_FLUSH, null, "bnet-alarm")
+    }.also { tts = it }
     speech.setSpeechRate(0.9f)
+    speech.speak("Don't touch the phone. Three, two, one, alarm.", TextToSpeech.QUEUE_FLUSH, null, "bnet-alarm")
     val tone = ToneGenerator(AudioManager.STREAM_ALARM, 100); tone.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 5000)
 }
 private var tts: TextToSpeech? = null
-private fun ttsReady(context: Context): TextToSpeech? { return tts ?: TextToSpeech(context) { }.also { tts = it } }
