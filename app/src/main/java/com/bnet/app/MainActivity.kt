@@ -75,9 +75,9 @@ private fun GuardApp(context: Context) {
     var evidence by remember { mutableStateOf(loadEvidence(context)) }
     var showPin by remember { mutableStateOf(false) }
     var pinInput by remember { mutableStateOf("") }
-    val permissions = arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+    val permissions = arrayOf(Manifest.permission.CAMERA)
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
-        if (!grants.values.all { it }) notice = "La caméra et le microphone sont nécessaires au mode garde."
+        if (!grants.values.all { it }) notice = "La caméra est nécessaire au mode garde."
     }
     LaunchedEffect(Unit) {
         if (permissions.any { ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED }) permissionLauncher.launch(permissions)
