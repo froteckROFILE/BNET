@@ -94,16 +94,16 @@ private fun GuardApp(context: Context) {
     LaunchedEffect(Unit) {
         if (permissions.any { ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED }) permissionLauncher.launch(permissions)
     }
-    val onInspection = remember(context, prefs) {
-        { unknown: Boolean, file: File? ->
-            if (unknown) {
-                alert = true
-                guard = false
-                prefs.edit().putBoolean("armed", false).apply()
-                evidence = loadEvidence(context)
-                speakAlarm(context)
-                file?.let { sendEvidenceToGateway(context, prefs, it) { result -> notice = result } }
-            } else file?.delete()
+    val onInspection: (Boolean, File?) -> Unit = { unknown, file ->
+        if (unknown) {
+            alert = true
+            guard = false
+            prefs.edit().putBoolean("armed", false).apply()
+            evidence = loadEvidence(context)
+            speakAlarm(context)
+            if (file != null) sendEvidenceToGateway(context, prefs, file) { result -> notice = result }
+        } else {
+            file?.delete()
         }
     }
     LaunchedEffect(guard, alert) {
@@ -116,7 +116,10 @@ private fun GuardApp(context: Context) {
         }
     }
     LaunchedEffect(motionPulse, guard, alert) {
-        if (motionPulse > 0 && guard && !alert) imageCapture?.let { capture -> captureAndInspect(context, capture, prefs, onInspection) }
+        if (motionPulse > 0 && guard && !alert) {
+            val capture = imageCapture
+            if (capture != null) captureAndInspect(context, capture, prefs, onInspection)
+        }
     }
     DisposableEffect(guard, alert) {
         if (!guard || alert) return@DisposableEffect onDispose { }
