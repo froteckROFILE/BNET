@@ -213,7 +213,7 @@ private fun CameraPreview(onCaptureReady: (ImageCapture) -> Unit, onFaceDetected
             try { provider.unbindAll(); provider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_FRONT_CAMERA, preview, capture, analysis); onCaptureReady(capture) } catch (_: Exception) { }
         }, ContextCompat.getMainExecutor(context))
         view
-    })
+    }))
 }
 
 private fun captureAndInspect(context: Context, capture: ImageCapture, prefs: android.content.SharedPreferences, done: (Boolean, File?) -> Unit) {
