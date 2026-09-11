@@ -4,8 +4,13 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.media.AudioManager
 import android.media.ToneGenerator
+import android.os.SystemClock
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import androidx.activity.ComponentActivity
@@ -41,11 +46,16 @@ import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetectorOptions
 import kotlinx.coroutines.delay
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
+import android.util.Base64
+import org.json.JSONObject
 
 private val Green = Color(0xFF26E889)
 private val Cyan = Color(0xFF5DE7FF)
@@ -66,7 +76,7 @@ class MainActivity : ComponentActivity() {
 private fun GuardApp(context: Context) {
     val prefs = remember { context.getSharedPreferences("bnet_guard", Context.MODE_PRIVATE) }
     var screen by remember { mutableStateOf(if (prefs.getString("owner_signature", null).isNullOrBlank()) "enroll" else "home") }
-    var guard by remember { mutableStateOf(false) }
+    var guard by remember { mutableStateOf(prefs.getBoolean("armed", false)) }
     var alert by remember { mutableStateOf(false) }
     var faceDetected by remember { mutableStateOf(false) }
     var enrollmentCount by remember { mutableIntStateOf(0) }
@@ -75,6 +85,8 @@ private fun GuardApp(context: Context) {
     var evidence by remember { mutableStateOf(loadEvidence(context)) }
     var showPin by remember { mutableStateOf(false) }
     var pinInput by remember { mutableStateOf("") }
+    var motionPulse by remember { mutableIntStateOf(0) }
+    val lastMotion = remember { AtomicLong(0L) }
     val permissions = arrayOf(Manifest.permission.CAMERA)
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
         if (!grants.values.all { it }) notice = "La caméra est nécessaire au mode garde."
@@ -82,31 +94,78 @@ private fun GuardApp(context: Context) {
     LaunchedEffect(Unit) {
         if (permissions.any { ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED }) permissionLauncher.launch(permissions)
     }
+    val onInspection = remember(context, prefs) {
+        { unknown: Boolean, file: File? ->
+            if (unknown) {
+                alert = true
+                guard = false
+                prefs.edit().putBoolean("armed", false).apply()
+                evidence = loadEvidence(context)
+                speakAlarm(context)
+                file?.let { sendEvidenceToGateway(context, prefs, it) { result -> notice = result } }
+            } else file?.delete()
+        }
+    }
     LaunchedEffect(guard, alert) {
         if (guard && !alert) {
             while (guard && !alert) {
                 delay(2800)
                 val capture = imageCapture ?: continue
-                captureAndInspect(context, capture, prefs) { unknown, file ->
-                    if (unknown) {
-                        alert = true
-                        guard = false
-                        evidence = loadEvidence(context)
-                        speakAlarm(context)
-                    } else file?.delete()
+                captureAndInspect(context, capture, prefs, onInspection)
+            }
+        }
+    }
+    LaunchedEffect(motionPulse, guard, alert) {
+        if (motionPulse > 0 && guard && !alert) imageCapture?.let { capture -> captureAndInspect(context, capture, prefs, onInspection) }
+    }
+    DisposableEffect(guard, alert) {
+        if (!guard || alert) return@DisposableEffect onDispose { }
+        val manager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+        val sensor = manager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        val listener = object : SensorEventListener {
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+            override fun onSensorChanged(event: SensorEvent) {
+                val x = event.values.getOrElse(0) { 0f }
+                val y = event.values.getOrElse(1) { 0f }
+                val z = event.values.getOrElse(2) { 0f }
+                val magnitude = kotlin.math.sqrt((x * x + y * y + z * z).toDouble())
+                val now = SystemClock.elapsedRealtime()
+                if (abs(magnitude - SensorManager.GRAVITY_EARTH) > 3.2 && now - lastMotion.get() > 7000L) {
+                    lastMotion.set(now)
+                    motionPulse++
                 }
             }
         }
+        if (manager != null && sensor != null) manager.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_NORMAL)
+        onDispose { manager?.unregisterListener(listener) }
     }
     Surface(Modifier.fillMaxSize(), color = Dark) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(16.dp)) {
             Header(onSettings = { screen = "settings" })
             when {
                 alert -> AlertScreen(evidence, onStop = { showPin = true })
-                screen == "enroll" -> EnrollmentScreen(context, { imageCapture = it }, enrollmentCount, faceDetected, { faceDetected = it }, { ctx -> imageCapture?.let { capture -> takeEnrollmentPhoto(ctx, capture) { enrollmentCount++; if (enrollmentCount >= 5) { prefs.edit().putString("owner_signature", loadSignature(ctx)).apply(); screen = "home"; notice = "Visage propriétaire enregistré localement." } } } })
+                screen == "enroll" -> EnrollmentScreen(
+                    context = context,
+                    onCaptureReady = { imageCapture = it },
+                    count = enrollmentCount,
+                    face = faceDetected,
+                    onFace = { faceDetected = it },
+                    take = { ctx -> imageCapture?.let { capture -> takeEnrollmentPhoto(ctx, capture) { enrollmentCount++ } } },
+                    onSave = {
+                        val signature = loadSignature(context)
+                        if (enrollmentCount >= 5 && signature.isNotBlank()) {
+                            prefs.edit().putString("owner_signature", signature).putBoolean("armed", false).apply()
+                            screen = "home"
+                            notice = "Reconnaissance faciale enregistrée. Tu peux maintenant armer la protection."
+                        }
+                    }
+                )
                 screen == "proofs" -> ProofsScreen(evidence, onBack = { screen = "home" })
                 screen == "settings" -> SettingsScreen(prefs, onBack = { screen = "home" })
-                screen == "home" -> HomeScreen(guard, faceDetected, evidence, onGuard = { if (guard) guard = false else showPin = true }, onProofs = { screen = "proofs" }, onCamera = { imageCapture = it }, onFace = { faceDetected = it })
+                screen == "home" -> HomeScreen(guard, faceDetected, evidence, onGuard = {
+                    if (guard) showPin = true
+                    else { guard = true; prefs.edit().putBoolean("armed", true).apply(); notice = "Protection armée : bouge le téléphone pour lancer une vérification." }
+                }, onProofs = { screen = "proofs" }, onCamera = { imageCapture = it }, onFace = { faceDetected = it })
             }
             if (notice.isNotBlank()) Text(notice, color = Green, fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(8.dp))
         }
@@ -135,11 +194,11 @@ private fun HomeScreen(guard: Boolean, face: Boolean, evidence: List<Evidence>, 
             Text(if (guard) "MODE GARDE ACTIF" else "MODE GARDE INACTIF", color = if (guard) Green else Color.LightGray, fontSize = 19.sp, fontWeight = FontWeight.Black)
             Text(if (guard) "Caméra frontale surveillée • état visible" else "Active la protection volontairement", color = Color.Gray, fontSize = 12.sp)
             Spacer(Modifier.height(12.dp))
-            CameraPreview(onCaptureReady = onCamera, onFaceDetected = onFace)
+            CameraPreview(onCaptureReady = onCamera, onFaceDetected = onFace, modifier = Modifier.fillMaxWidth().height(260.dp))
             Spacer(Modifier.height(12.dp))
             Text(if (face) "Visage détecté" else "Aucun visage détecté", color = if (face) Green else Color.Gray)
             Spacer(Modifier.height(12.dp))
-            Button(onClick = onGuard, colors = ButtonDefaults.buttonColors(containerColor = if (guard) Red else Green), modifier = Modifier.fillMaxWidth()) { Text(if (guard) "DÉSACTIVER LE MODE GARDE" else "ACTIVER LE MODE GARDE", color = Dark, fontWeight = FontWeight.Bold) }
+            Button(onClick = onGuard, colors = ButtonDefaults.buttonColors(containerColor = if (guard) Red else Green), modifier = Modifier.fillMaxWidth()) { Text(if (guard) "DÉSARMER LA PROTECTION" else "ARMER LA PROTECTION", color = Dark, fontWeight = FontWeight.Bold) }
         }
     }
     Spacer(Modifier.height(12.dp))
@@ -151,13 +210,14 @@ private fun HomeScreen(guard: Boolean, face: Boolean, evidence: List<Evidence>, 
 }
 
 @Composable
-private fun EnrollmentScreen(context: Context, onCaptureReady: (ImageCapture) -> Unit, count: Int, face: Boolean, onFace: (Boolean) -> Unit, take: (Context) -> Unit) {
+private fun EnrollmentScreen(context: Context, onCaptureReady: (ImageCapture) -> Unit, count: Int, face: Boolean, onFace: (Boolean) -> Unit, take: (Context) -> Unit, onSave: () -> Unit) {
     Text("ENREGISTRER MON VISAGE", color = Green, fontWeight = FontWeight.Black, fontSize = 19.sp, modifier = Modifier.padding(top = 16.dp))
     Text("Prends 5 clichés avec des angles et lumières différents. Les signatures restent sur ce téléphone.", color = Color.LightGray, fontSize = 12.sp, modifier = Modifier.padding(vertical = 8.dp))
-    CameraPreview(onCaptureReady = onCaptureReady, onFaceDetected = onFace)
+    CameraPreview(onCaptureReady = onCaptureReady, onFaceDetected = onFace, modifier = Modifier.fillMaxWidth().height(260.dp))
     Text("Clichés valides : $count / 5", color = if (count >= 5) Green else Color.White, modifier = Modifier.padding(10.dp))
     Text(if (face) "Visage détecté : tu peux capturer." else "Place ton visage dans le cadre.", color = if (face) Green else Color.Gray, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
-    Button(onClick = { take(context) }, enabled = face && count < 5, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) { Text("CAPTURER LE CLICHÉ") }
+    Button(onClick = { take(context) }, enabled = face && count < 5, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) { Text("CAPTURER LE CLICHÉ (${count + 1}/5)") }
+    Button(onClick = onSave, enabled = count >= 5, colors = ButtonDefaults.buttonColors(containerColor = if (count >= 5) Green else Color.DarkGray), modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("ENREGISTRER LA RECONNAISSANCE FACIALE", color = Dark, fontWeight = FontWeight.Bold) }
 }
 
 @Composable
@@ -184,21 +244,24 @@ private fun ProofsScreen(evidence: List<Evidence>, onBack: () -> Unit) {
 private fun SettingsScreen(prefs: android.content.SharedPreferences, onBack: () -> Unit) {
     var email by remember { mutableStateOf(prefs.getString("email", "").orEmpty()) }
     var pin by remember { mutableStateOf(prefs.getString("owner_pin", "1234").orEmpty()) }
+    var gateway by remember { mutableStateOf(prefs.getString("gateway_url", "").orEmpty()) }
     TextButton(onClick = onBack) { Text("‹ Accueil") }
     Text("RÉGLAGES BNET GUARD", color = Green, fontWeight = FontWeight.Black, fontSize = 19.sp)
     OutlinedTextField(email, { email = it.take(120) }, label = { Text("E-mail de destination") }, modifier = Modifier.fillMaxWidth().padding(top = 14.dp), singleLine = true)
     OutlinedTextField(pin, { pin = it.take(8) }, label = { Text("Code propriétaire") }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), singleLine = true)
-    Button(onClick = { prefs.edit().putString("email", email).putString("owner_pin", pin.ifBlank { "1234" }).apply(); onBack() }, modifier = Modifier.fillMaxWidth().padding(top = 14.dp)) { Text("ENREGISTRER") }
-    Text("La transmission e-mail nécessite une passerelle HTTPS configurée. Sans connexion, les preuves restent dans la file locale.", color = Color.Gray, fontSize = 11.sp, modifier = Modifier.padding(top = 18.dp))
+    OutlinedTextField(gateway, { gateway = it.take(240) }, label = { Text("URL passerelle HTTPS Supabase") }, placeholder = { Text("https://…/functions/v1/send-evidence") }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), singleLine = true)
+    Button(onClick = { prefs.edit().putString("email", email).putString("owner_pin", pin.ifBlank { "1234" }).putString("gateway_url", gateway).apply(); onBack() }, modifier = Modifier.fillMaxWidth().padding(top = 14.dp)) { Text("ENREGISTRER") }
+    Text("La passerelle doit envoyer l’e-mail côté serveur. La clé secrète Supabase ne doit jamais être mise dans l’APK.", color = Color.Gray, fontSize = 11.sp, modifier = Modifier.padding(top = 18.dp))
 }
 
 @Composable
-private fun CameraPreview(onCaptureReady: (ImageCapture) -> Unit, onFaceDetected: (Boolean) -> Unit) {
+private fun CameraPreview(onCaptureReady: (ImageCapture) -> Unit, onFaceDetected: (Boolean) -> Unit, modifier: Modifier = Modifier.fillMaxWidth().height(240.dp)) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val executor = remember { Executors.newSingleThreadExecutor() }
     AndroidView(
         factory = { PreviewView(context) },
+        modifier = modifier,
         update = { view ->
             if (view.tag == null) {
                 view.tag = "bnet-camera-bound"
@@ -298,19 +361,20 @@ private fun compare(a: String, b: String): Double {
 }
 private fun loadEvidence(context: Context): List<Evidence> = context.filesDir.listFiles()?.filter { it.name.startsWith("evidence-") }?.sortedByDescending { it.lastModified() }?.map { Evidence(it.absolutePath, SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault()).format(Date(it.lastModified())), "Conservé localement • envoi en attente") }.orEmpty()
 
-private var tts: TextToSpeech? = null
-private fun speakAlarm(context: Context) {
-    val current = tts
-    if (current == null) {
-        tts = TextToSpeech(context, TextToSpeech.OnInitListener { result ->
-            if (result == TextToSpeech.SUCCESS) {
-                tts?.setSpeechRate(0.9f)
-                tts?.speak("Don't touch the phone. Three, two, one, alarm.", TextToSpeech.QUEUE_FLUSH, null, "bnet-alarm")
-            }
-        })
-    } else {
-        current.setSpeechRate(0.9f)
-        current.speak("Don't touch the phone. Three, two, one, alarm.", TextToSpeech.QUEUE_FLUSH, null, "bnet-alarm")
-    }
-    val tone = ToneGenerator(AudioManager.STREAM_ALARM, 100); tone.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 5000)
-}
+private val evidenceExecutor = Executors.newSingleThreadExecutor()
+private fun sendEvidenceToGateway(context: Context, prefs: android.content.SharedPreferences, file: File, done: (String) -> Unit) {
+    val email = prefs.getString("email", "").orEmpty().trim()
+    val gateway = prefs.getString("gateway_url", "").orEmpty().trim()
+    if (email.isBlank()) { done("Preuve enregistrée : ajoute un e-mail dans Réglages."); return }
+    if (gateway.isBlank()) { done("Preuve enregistrée localement : passerelle HTTPS non configurée."); return }
+    evidenceExecutor.execute {
+        val result = runCatching {
+            val body = JSONObject()
+                .put("to", email)
+                .put("subject", "Alerte BNET Guard")
+                .put("created_at", Date(file.lastModified()).toInstant().toString())
+                .put("image_base64", Base64.encodeToString(file.readBytes(), Base64.NO_WRAP))
+                .toString()
+            val connection = (URL(gateway).openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 10_000
