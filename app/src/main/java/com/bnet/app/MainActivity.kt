@@ -378,3 +378,33 @@ private fun sendEvidenceToGateway(context: Context, prefs: android.content.Share
             val connection = (URL(gateway).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 connectTimeout = 10_000
+                readTimeout = 20_000
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("Accept", "application/json")
+            }
+            connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+            val code = connection.responseCode
+            connection.disconnect()
+            if (code in 200..299) "E-mail d’alerte envoyé." else "Preuve conservée : échec de la passerelle ($code)."
+        }.getOrElse { "Preuve conservée : passerelle inaccessible, envoi en attente." }
+        ContextCompat.getMainExecutor(context).execute { done(result) }
+    }
+}
+
+private var tts: TextToSpeech? = null
+private fun speakAlarm(context: Context) {
+    val current = tts
+    if (current == null) {
+        tts = TextToSpeech(context, TextToSpeech.OnInitListener { result ->
+            if (result == TextToSpeech.SUCCESS) {
+                tts?.setSpeechRate(0.9f)
+                tts?.speak("Don't touch the phone. Three, two, one, alarm.", TextToSpeech.QUEUE_FLUSH, null, "bnet-alarm")
+            }
+        })
+    } else {
+        current.setSpeechRate(0.9f)
+        current.speak("Don't touch the phone. Three, two, one, alarm.", TextToSpeech.QUEUE_FLUSH, null, "bnet-alarm")
+    }
+    val tone = ToneGenerator(AudioManager.STREAM_ALARM, 100); tone.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 5000)
+}
