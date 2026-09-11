@@ -197,11 +197,30 @@ private fun CameraPreview(onCaptureReady: (ImageCapture) -> Unit, onFaceDetected
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val executor = remember { Executors.newSingleThreadExecutor() }
-    AndroidView(factory = { PreviewView(context).also { view ->
+    AndroidView(
+        factory = { PreviewView(context) },
+        update = { view ->
+            if (view.tag == null) {
+                view.tag = "bnet-camera-bound"
+                bindCamera(context, lifecycleOwner, view, executor, onCaptureReady, onFaceDetected)
+            }
+        }
+    )
+}
+
+private fun bindCamera(
+    context: Context,
+    lifecycleOwner: androidx.lifecycle.LifecycleOwner,
+    view: PreviewView,
+    executor: java.util.concurrent.Executor,
+    onCaptureReady: (ImageCapture) -> Unit,
+    onFaceDetected: (Boolean) -> Unit
+) {
         val future = ProcessCameraProvider.getInstance(context)
         future.addListener({
             val provider = future.get()
-            val preview = Preview.Builder().build().also { it.surfaceProvider = view.surfaceProvider }
+            val preview = Preview.Builder().build()
+            preview.setSurfaceProvider(view.surfaceProvider)
             val capture = ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build()
             val analysis = ImageAnalysis.Builder().setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST).build()
             val detector = FaceDetection.getClient(FaceDetectorOptions.Builder().setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST).build())
@@ -212,8 +231,6 @@ private fun CameraPreview(onCaptureReady: (ImageCapture) -> Unit, onFaceDetected
             }
             try { provider.unbindAll(); provider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_FRONT_CAMERA, preview, capture, analysis); onCaptureReady(capture) } catch (_: Exception) { }
         }, ContextCompat.getMainExecutor(context))
-        view
-    }))
 }
 
 private fun captureAndInspect(context: Context, capture: ImageCapture, prefs: android.content.SharedPreferences, done: (Boolean, File?) -> Unit) {
@@ -281,12 +298,19 @@ private fun compare(a: String, b: String): Double {
 }
 private fun loadEvidence(context: Context): List<Evidence> = context.filesDir.listFiles()?.filter { it.name.startsWith("evidence-") }?.sortedByDescending { it.lastModified() }?.map { Evidence(it.absolutePath, SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault()).format(Date(it.lastModified())), "Conservé localement • envoi en attente") }.orEmpty()
 
+private var tts: TextToSpeech? = null
 private fun speakAlarm(context: Context) {
-    val speech = tts ?: TextToSpeech(context) { result ->
-        if (result == TextToSpeech.SUCCESS) tts?.speak("Don't touch the phone. Three, two, one, alarm.", TextToSpeech.QUEUE_FLUSH, null, "bnet-alarm")
-    }.also { tts = it }
-    speech.setSpeechRate(0.9f)
-    speech.speak("Don't touch the phone. Three, two, one, alarm.", TextToSpeech.QUEUE_FLUSH, null, "bnet-alarm")
+    val current = tts
+    if (current == null) {
+        tts = TextToSpeech(context, TextToSpeech.OnInitListener { result ->
+            if (result == TextToSpeech.SUCCESS) {
+                tts?.setSpeechRate(0.9f)
+                tts?.speak("Don't touch the phone. Three, two, one, alarm.", TextToSpeech.QUEUE_FLUSH, null, "bnet-alarm")
+            }
+        })
+    } else {
+        current.setSpeechRate(0.9f)
+        current.speak("Don't touch the phone. Three, two, one, alarm.", TextToSpeech.QUEUE_FLUSH, null, "bnet-alarm")
+    }
     val tone = ToneGenerator(AudioManager.STREAM_ALARM, 100); tone.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 5000)
 }
-private var tts: TextToSpeech? = null
