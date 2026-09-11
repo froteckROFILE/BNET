@@ -2,7 +2,7 @@ plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 android {
     namespace="com.bnet.app"; compileSdk=35
     defaultConfig {
-        applicationId="com.bnet.app"; minSdk=26; targetSdk=35; versionCode=9; versionName="0.8.0"
+        applicationId="com.bnet.guard"; minSdk=26; targetSdk=35; versionCode=3; versionName="0.3.0"
         buildConfigField("String", "SUPABASE_URL", "\"https://lqsplflluosfbinszoqn.supabase.co\"")
         buildConfigField("String", "SUPABASE_KEY", "\"sb_publishable_Gk-jPZm1hSqCQh_1ChRZog_098HlOlX\"")
     }
@@ -17,11 +17,11 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.foundation:foundation")
-    implementation("androidx.compose.animation:animation")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.core:core-ktx:1.15.0")
-    implementation("io.coil-kt:coil-compose:2.7.0")
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("com.google.android.gms:play-services-nearby:19.3.0")
-    implementation("io.github.webrtc-sdk:android:125.6422.07")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
+    implementation("androidx.compose.animation:animation")
+    implementation("androidx.camera:camera-camera2:1.4.1")
+    implementation("androidx.camera:camera-lifecycle:1.4.1")
+    implementation("androidx.camera:camera-view:1.4.1")
+    implementation("com.google.mlkit:face-detection:16.1.7")
 }
