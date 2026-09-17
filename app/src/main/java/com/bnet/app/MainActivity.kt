@@ -153,9 +153,9 @@ private fun CalmDial(progress: Float) {
     }
 }
 
-private data class CalmDisplay(val label: String, val progress: Float)
+internal data class CalmDisplay(val label: String, val progress: Float)
 
-private object CalmClock {
+internal object CalmClock {
     fun display(nowMillis: Long): CalmDisplay {
         val cal = java.util.Calendar.getInstance()
         cal.timeInMillis = nowMillis
