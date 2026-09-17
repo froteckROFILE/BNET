@@ -1,171 +1,184 @@
 package com.bnet.app
 
 import android.Manifest
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.delay
+import java.util.Locale
 import kotlin.math.cos
 import kotlin.math.sin
 
-private val Green = Color(0xFF39FF88)
-private val Dark = Color(0xFF030A07)
-private val Panel = Color(0xFF0C1B13)
+private val Space = Color(0xFF050914)
+private val Card = Color(0xFF101A2D)
+private val Gold = Color(0xFFFFC857)
+private val Blue = Color(0xFF70B7FF)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val number = BnetNumber.getOrCreate(this)
-        val mesh = MeshManager(this, number)
-        setContent { MaterialTheme(colorScheme = darkColorScheme(primary = Green, surface = Panel)) { BnetApp(number, mesh) } }
-    }
-}
-
-@Composable
-private fun BnetApp(number: String, mesh: MeshManager) {
-    var splash by remember { mutableStateOf(true) }
-    LaunchedEffect(Unit) { delay(3400); splash = false }
-    if (splash) BnetSplash() else BnetScreen(number, mesh)
-}
-
-@Composable
-private fun BnetSplash() {
-    val transition = rememberInfiniteTransition(label = "portal")
-    val angle by transition.animateFloat(0f, 360f, infiniteRepeatable(tween(1800, easing = LinearEasing)), label = "rotation")
-    var shown by remember { mutableIntStateOf(0) }
-    val title = "BNET"
-    LaunchedEffect(Unit) { repeat(title.length) { delay(300); shown++ } }
-    Surface(Modifier.fillMaxSize(), color = Dark) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            Canvas(Modifier.size(180.dp)) {
-                val pad = 22.dp.toPx(); val diameter = size.minDimension - pad * 2
-                drawArc(Green.copy(alpha = .18f), angle, 305f, false, Offset(pad, pad), Size(diameter, diameter), style = Stroke(8.dp.toPx(), cap = StrokeCap.Round))
-                drawArc(Green, angle + 55f, 210f, false, Offset(pad + 15, pad + 15), Size(diameter - 30, diameter - 30), style = Stroke(4.dp.toPx(), cap = StrokeCap.Round))
-                val r = diameter / 2; val rad = Math.toRadians(angle.toDouble())
-                drawCircle(Green, 8.dp.toPx(), Offset(center.x + r * cos(rad).toFloat(), center.y + r * sin(rad).toFloat()))
-            }
-            Text(title.take(shown), fontSize = 48.sp, fontWeight = FontWeight.Black, letterSpacing = 9.sp, color = Color.White)
-            Spacer(Modifier.height(14.dp)); Text("RÉSEAU HUMAIN LOCAL", color = Green, letterSpacing = 2.sp)
-            Spacer(Modifier.height(40.dp)); Text("développé par ABDNOUR LABED", color = Color.Gray, fontSize = 13.sp)
+        if (Build.VERSION.SDK_INT >= 33) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 10)
         }
-    }
-}
-
-@Composable
-fun BnetScreen(myNumber: String, mesh: MeshManager) {
-    var tab by remember { mutableIntStateOf(0) }
-    var message by remember { mutableStateOf("") }
-    val status by mesh.status.collectAsState(); val peers by mesh.peers.collectAsState(); val callState by mesh.callState.collectAsState(); val remote by mesh.remoteNumber.collectAsState()
-    val permissions = buildList {
-        add(Manifest.permission.RECORD_AUDIO)
-        if (Build.VERSION.SDK_INT >= 31) { add(Manifest.permission.BLUETOOTH_SCAN); add(Manifest.permission.BLUETOOTH_ADVERTISE); add(Manifest.permission.BLUETOOTH_CONNECT) }
-        if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.NEARBY_WIFI_DEVICES)
-        if (Build.VERSION.SDK_INT < 32) add(Manifest.permission.ACCESS_FINE_LOCATION)
-    }.toTypedArray()
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
-        if (grants.values.all { it }) mesh.start() else message = "Autorise les appareils à proximité et le microphone."
-    }
-    DisposableEffect(Unit) { onDispose { mesh.stop() } }
-    Surface(Modifier.fillMaxSize(), color = Dark) {
-        Column(Modifier.fillMaxSize().padding(16.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column { Text("BNET", fontSize = 27.sp, fontWeight = FontWeight.Black, color = Green); Text(myNumber, color = Color.White, fontSize = 13.sp) }
-                AssistChip(onClick = { launcher.launch(permissions) }, label = { Text(if (peers.isEmpty()) "RADAR" else "${peers.size} EN LIGNE") })
-            }
-            Text(status, color = Color.Gray, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
-            if (callState != CallState.IDLE) CallPanel(callState, remote, mesh)
-            else if (tab == 0) DialerScreen(peers, mesh) { message = it }
-            else MessengerScreen(peers, mesh) { message = it }
-            if (message.isNotBlank()) Text(message, color = Color(0xFFFF9B93), fontSize = 13.sp, modifier = Modifier.padding(6.dp))
-            Spacer(Modifier.weight(1f))
-            NavigationBar(containerColor = Panel) {
-                NavigationBarItem(selected = tab == 0, onClick = { tab = 0 }, icon = { Text("☎", fontSize = 22.sp) }, label = { Text("Appels") })
-                NavigationBarItem(selected = tab == 1, onClick = { tab = 1 }, icon = { Text("✉", fontSize = 22.sp) }, label = { Text("Messages") })
+        ContextCompat.startForegroundService(
+            this,
+            Intent(this, InterstellarTimeService::class.java)
+        )
+        setContent {
+            MaterialTheme(colorScheme = darkColorScheme(primary = Gold, background = Space, surface = Card)) {
+                InterstellarScreen()
             }
         }
     }
 }
 
 @Composable
-private fun DialerScreen(peers: Map<String, String>, mesh: MeshManager, report: (String) -> Unit) {
-    var dial by remember { mutableStateOf("") }
-    Text("Téléphones à portée", fontWeight = FontWeight.Bold)
-    LazyColumn(Modifier.fillMaxWidth().heightIn(max = 130.dp)) {
-        items(peers.entries.toList(), key = { it.key }) { peer ->
-            PeerCard(peer.value, "APPELER") { if (!mesh.callEndpoint(peer.key)) report("Connexion en préparation, réessaie dans 2 secondes.") }
+private fun InterstellarScreen() {
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            now = System.currentTimeMillis()
+            delay(60_000)
         }
     }
-    OutlinedTextField(dial, { dial = it.take(16) }, label = { Text("Numéro BNET") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), shape = RoundedCornerShape(18.dp))
-    val keys = listOf("1","2","3","4","5","6","7","8","9","+","0","⌫")
-    keys.chunked(3).forEach { row -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) { row.forEach { key -> TextButton(onClick = { if (key == "⌫") dial = dial.dropLast(1) else if (dial.length < 16) dial += key }, modifier = Modifier.size(86.dp, 48.dp)) { Text(key, fontSize = 22.sp) } } } }
-    Button(onClick = { if (!mesh.callNumber(dial)) report("Numéro absent du radar.") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) { Text("APPELER SUR BNET") }
-}
 
-@Composable
-private fun MessengerScreen(peers: Map<String, String>, mesh: MeshManager, report: (String) -> Unit) {
-    val messages by mesh.messages.collectAsState(); var selected by remember { mutableStateOf("") }; var draft by remember { mutableStateOf("") }
-    Text("Messagerie locale", fontWeight = FontWeight.Bold)
-    if (peers.isEmpty()) Text("Active le radar pour trouver un contact.", color = Color.Gray, modifier = Modifier.padding(16.dp))
-    LazyColumn(Modifier.fillMaxWidth().heightIn(max = 105.dp)) { items(peers.entries.toList(), key = { it.key }) { peer -> PeerCard(peer.value, if (selected == peer.key) "CHOISI" else "ÉCRIRE") { selected = peer.key } } }
-    HorizontalDivider(Modifier.padding(vertical = 8.dp), color = Color.DarkGray)
-    LazyColumn(Modifier.fillMaxWidth().height(190.dp)) {
-        items(messages) { item ->
-            Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), horizontalArrangement = if (item.mine) Arrangement.End else Arrangement.Start) {
-                Card(colors = CardDefaults.cardColors(containerColor = if (item.mine) Color(0xFF126B3D) else Panel)) { Column(Modifier.padding(10.dp).widthIn(max = 245.dp)) { Text(item.peer, color = Color.LightGray, fontSize = 10.sp); Text(item.text) } }
-            }
-        }
-    }
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        OutlinedTextField(draft, { draft = it.take(500) }, label = { Text("Message") }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp))
-        Spacer(Modifier.width(8.dp)); Button(onClick = { if (selected.isBlank()) report("Choisis d’abord un numéro.") else if (mesh.sendMessage(selected, draft)) draft = "" else report("Message non envoyé.") }) { Text("➤") }
-    }
-}
+    val calm = CalmClock.display(now)
+    val real = CalmClock.realTime(now)
 
-@Composable
-private fun PeerCard(number: String, action: String, onClick: () -> Unit) {
-    Card(Modifier.fillMaxWidth().padding(vertical = 3.dp).clickable(onClick = onClick), colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(15.dp)) {
-        Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) { Text(number); Text(action, color = Green, fontWeight = FontWeight.Bold, fontSize = 12.sp) }
-    }
-}
-
-@Composable
-private fun CallPanel(state: CallState, remote: String, mesh: MeshManager) {
-    var seconds by remember { mutableIntStateOf(0) }
-    LaunchedEffect(state) { seconds = 0; if (state == CallState.ACTIVE) while (true) { delay(1000); seconds++ } }
-    val time = "%02d:%02d".format(seconds / 60, seconds % 60)
-    Card(Modifier.fillMaxWidth().padding(vertical = 28.dp), colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(28.dp)) {
-        Column(Modifier.fillMaxWidth().padding(30.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(when (state) { CallState.INCOMING -> "APPEL BNET ENTRANT"; CallState.OUTGOING -> "SONNERIE…"; CallState.ACTIVE -> "INTERPHONE ACTIF"; else -> "" }, color = Green, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(18.dp)); Text(remote, fontSize = 23.sp, textAlign = TextAlign.Center)
-            Spacer(Modifier.height(10.dp)); Text(if (state == CallState.ACTIVE) time else "— —", fontSize = 30.sp, color = Color.White)
+    Surface(Modifier.fillMaxSize(), color = Space) {
+        Column(
+            Modifier.fillMaxSize().padding(22.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
             Spacer(Modifier.height(28.dp))
-            if (state == CallState.INCOMING) Row {
-                Button(onClick = mesh::acceptCall) { Text("Décrocher") }; Spacer(Modifier.width(12.dp))
-                Button(onClick = mesh::declineCall, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB91C1C))) { Text("Refuser") }
-            } else Button(onClick = mesh::hangUp, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB91C1C))) { Text("Raccrocher") }
+            Text(
+                "INTERSTELLAR TIME",
+                color = Gold,
+                fontSize = 25.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 3.sp
+            )
+            Text(
+                "TEMPS CALME • 2H / 24H",
+                color = Blue,
+                fontSize = 12.sp,
+                letterSpacing = 2.sp,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+            Spacer(Modifier.height(34.dp))
+            CalmDial(calm.progress)
+            Spacer(Modifier.height(26.dp))
+            Text(
+                calm.label,
+                color = Color.White,
+                fontSize = 54.sp,
+                fontWeight = FontWeight.Light,
+                letterSpacing = 5.sp
+            )
+            Text(
+                "heure affichée",
+                color = Color.LightGray,
+                fontSize = 14.sp
+            )
+            Spacer(Modifier.height(30.dp))
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Card),
+                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Heure réelle", color = Color.LightGray, fontSize = 13.sp)
+                    Text(real, color = Blue, fontSize = 26.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Chaque minute affichée représente 12 minutes réelles.",
+                        color = Color.Gray,
+                        fontSize = 12.sp
+                    )
+                }
+            }
+            Spacer(Modifier.weight(1f))
+            Text(
+                "La notification reste visible sur l’écran verrouillé.",
+                color = Color.Gray,
+                fontSize = 12.sp
+            )
+            Text(
+                "INTERSTELLAR TIME • LABED ABDNOUR",
+                color = Gold.copy(alpha = .75f),
+                fontSize = 11.sp,
+                modifier = Modifier.padding(top = 10.dp, bottom = 12.dp)
+            )
         }
+    }
+}
+
+@Composable
+private fun CalmDial(progress: Float) {
+    Canvas(Modifier.size(230.dp)) {
+        val stroke = 12.dp.toPx()
+        val radius = size.minDimension / 2f - stroke
+        drawCircle(Color(0xFF1C2A42), radius, style = Stroke(stroke))
+        drawArc(
+            color = Gold,
+            startAngle = -90f,
+            sweepAngle = progress * 360f,
+            useCenter = false,
+            style = Stroke(stroke, cap = StrokeCap.Round)
+        )
+        val angle = Math.toRadians((-90f + progress * 360f).toDouble())
+        val point = center.copy(
+            x = center.x + radius * cos(angle).toFloat(),
+            y = center.y + radius * sin(angle).toFloat()
+        )
+        drawCircle(Gold, 8.dp.toPx(), point)
+        drawCircle(Blue.copy(alpha = .25f), radius * .55f, style = Stroke(2.dp.toPx()))
+    }
+}
+
+private data class CalmDisplay(val label: String, val progress: Float)
+
+private object CalmClock {
+    fun display(nowMillis: Long): CalmDisplay {
+        val cal = java.util.Calendar.getInstance()
+        cal.timeInMillis = nowMillis
+        val minutes = cal.get(java.util.Calendar.HOUR_OF_DAY) * 60 +
+            cal.get(java.util.Calendar.MINUTE) +
+            cal.get(java.util.Calendar.SECOND) / 60f
+        val calmMinutes = minutes / 12f
+        val hour = calmMinutes.toInt() / 60
+        val minute = calmMinutes.toInt() % 60
+        return CalmDisplay(
+            String.format(Locale.US, "%02d:%02d", hour, minute),
+            calmMinutes / 120f
+        )
+    }
+
+    fun realTime(nowMillis: Long): String {
+        val cal = java.util.Calendar.getInstance()
+        cal.timeInMillis = nowMillis
+        return String.format(
+            Locale.US,
+            "%02d:%02d",
+            cal.get(java.util.Calendar.HOUR_OF_DAY),
+            cal.get(java.util.Calendar.MINUTE)
+        )
     }
 }
