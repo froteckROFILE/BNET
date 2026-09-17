@@ -1,11 +1,9 @@
-name: Build and publish Interstellar Time 0.4.0
+name: Build Interstellar Time APK (manual)
 on:
-  push:
-    branches: [interstellar-time]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -24,13 +22,3 @@ jobs:
         with:
           name: BNET-interstellar-time-0.4.0
           path: app/build/outputs/apk/debug/app-debug.apk
-      - name: Publish direct APK
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: interstellar-time-v0.4.0
-          name: Interstellar Time 0.4.0 - APK direct
-          body: Horloge BNET synchronisée, cinq modèles et widget.
-          files: app/build/outputs/apk/debug/app-debug.apk
-          make_latest: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
