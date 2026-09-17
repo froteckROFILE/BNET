@@ -41,6 +41,7 @@ class InterstellarTimeService : Service() {
     private fun updateNotification() {
         getSystemService(NotificationManager::class.java)
             .notify(NOTIFICATION_ID, buildNotification())
+        InterstellarWidget.updateAll(this)
     }
 
     private fun buildNotification(): Notification {
@@ -53,9 +54,9 @@ class InterstellarTimeService : Service() {
         val calm = CalmClock.display(System.currentTimeMillis())
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_recent_history)
-            .setContentTitle("INTERSTELLAR TIME")
-            .setContentText("Temps calme : ${calm.label}  •  2H / 24H")
-            .setSubText("Chaque minute = 12 minutes réelles")
+            .setContentTitle("INTERSTELLAR TIME • BNET")
+            .setContentText("Temps calme : ${calm.label} • ${calm.period}")
+            .setSubText("1 heure BNET = 12 heures réelles")
             .setOngoing(true)
             .setShowWhen(false)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
